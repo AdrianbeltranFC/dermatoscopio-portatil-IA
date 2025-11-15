@@ -18,6 +18,7 @@ env/
 /data/
 /data/*
 !data/metadata.csv
+!data/README.md
 
 # Models
 models/
