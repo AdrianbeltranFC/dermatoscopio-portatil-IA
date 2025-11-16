@@ -4,7 +4,11 @@ Descarga HAM10000 desde Kaggle (requiere kaggle.json en ~/.kaggle/). Ver README.
 Advertencia: el dataset es grande (~5.20GB), por favor asegúrate de tener suficiente espacio en disco.
 
 Uso:
-kaggle datasets download -d kmader/skin-cancer-mnist-ham10000 -p data/raw --
+Para Windows (PowerShell):
+    kaggle datasets download -d kmader/skin-cancer-mnist-ham10000 -p data/raw --unzip
+
+Para Linux/Mac (Bash):
+    bash download_data.sh
 
 """
 
