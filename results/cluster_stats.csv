@@ -1,0 +1,10 @@
+cluster,label,count
+0,melanoma,115
+0,nevus,430
+0,seborrheic_keratosis,82
+1,melanoma,30
+1,nevus,492
+1,seborrheic_keratosis,51
+2,melanoma,110
+2,nevus,570
+2,seborrheic_keratosis,120
