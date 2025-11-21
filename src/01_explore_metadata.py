@@ -1,6 +1,6 @@
 """
 explore_metadata.py
-Script para:
+Script de Análisis Exploratorio de Datos (EDA) para:
 - Mostrar estadísticas básicas
 - Guardar una cuadrícula de ejemplo por clase (9 imágenes por clase, puedes editar ese parámetro al llamar el script)
 - Guardar lista de imágenes más grandes/pequeñas (si interesa)

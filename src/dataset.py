@@ -1,5 +1,5 @@
 """
-dataset.py (versión robusta)
+dataset.py
 
 Funciones para:
  - cargar metadata (acepta CSV con 'filepath' o construir filepath desde 'image_id' + images_dir)
@@ -7,7 +7,11 @@ Funciones para:
  - crear splits por lesion_id (evita data leakage)
  - codificar etiquetas a enteros
 
-Comentarios en español para que lo entiendas paso a paso.
+Nota: Este script no necesita ser ejecutado directamente, sino que sus funciones son importadas por otros scripts
+ como src/02_cluster_embeddings.py o src/train_model.py.
+Uso típico:
+  from src.dataset import load_metadata, encode_labels, create_splits_by_lesion 
+
 """
 
 import os
