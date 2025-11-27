@@ -8,7 +8,7 @@ Para Windows (PowerShell):
     kaggle datasets download -d kmader/skin-cancer-mnist-ham10000 -p data/raw --unzip
 
 Para Linux/Mac (Bash):
-    bash download_data.sh
+    bash download_HAM.sh
 
 """
 
