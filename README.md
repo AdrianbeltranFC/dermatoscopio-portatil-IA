@@ -8,7 +8,8 @@ Este proyecto busca desarrollar un **dermatoscopio portátil basado en inteligen
 - Crear un modelo de IA para clasificación de lesiones cutáneas
 - Desarrollar una aplicación portátil y accesible
 - Utilizar el dataset HAM10000 para entrenamiento y validación
-- Automatizar la descarga y filtrado de datos. 
+- Automatizar la descarga y filtrado de datos
+- Implementar mitigación de sesgo en clasificación por tono de piel
 
 ---
 
