@@ -24,7 +24,7 @@ Esta opción utiliza la API de Kaggle para descargar el conjunto de datos **HAM1
 Abre una terminal en la **raíz de este proyecto** (la carpeta `dermatoscopio-portatil-IA`) y ejecuta:
 
 ```bash
-bash download_data.sh
+bash download_HAM.sh
 ```
 #### Nota IMPORTANTE para usuarios de Windows (PowerShell)
 
@@ -42,7 +42,7 @@ kaggle datasets download -d kmader/skin-cancer-mnist-ham10000 -p data/raw --unzi
 ### 3. Preparar el Archivo de Metadatos
 Una vez que las imágenes estén en data/raw/, significa que lograste descargar las imagenes y la metadata original. Para motivos de este proyecto, ahora debes ejecutar el script de Python para crear el archivo metadata.csv unificado que usará el modelo (toma el archivo crudo original de metadata y crea una versión nueva mas limpia y con imagenes únicamente de las etiquetas que se usaran para entrenar el modelo):
 ```
-python src/make_metadata.py --src data/raw/HAM10000_metadata.csv --images_dir data/raw --out data/metadata.csv
+python src/00_make_metadata.py --src data/raw/HAM10000_metadata.csv --images_dir data/raw --out data/metadata.csv
 ```
 Nota: Este script se debe ejecutar una única ves, ya que revisa cada archivo descargado y toma varios minutos en completarse. 
 ## Opción B (Alternativa): Archivo ISIC
