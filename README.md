@@ -1,6 +1,6 @@
 # Dermatoscopio Portátil con IA
 
-##  Descripción del Proyecto
+## 📋 Descripción del Proyecto
 
 Este proyecto busca desarrollar un **dermatoscopio portátil basado en inteligencia artificial** capaz de analizar imágenes de lesiones cutáneas y clasificarlas automáticamente. Utilizamos el dataset **HAM10000**, uno de los conjuntos de datos más grandes y confiables para el diagnóstico asistido por IA de enfermedades de la piel.
 
