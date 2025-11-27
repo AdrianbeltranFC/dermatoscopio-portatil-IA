@@ -1,4 +1,6 @@
+# ============================================================================
 # Python
+# ============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -22,38 +24,65 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+pip-log.txt
+pip-delete-this-directory.txt
 
+# ============================================================================
 # IDE
+# ============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+*.sublime-project
+*.sublime-workspace
 
+# ============================================================================
 # Jupyter
+# ============================================================================
 .ipynb_checkpoints/
 *.ipynb
+.jupyter/
 
-# Data (Imágenes crudas - DEMASIADO GRANDES)
-data/raw/HAM10000_images_part_1/
-data/raw/HAM10000_images_part_2/
+# ============================================================================
+# DATA - NO INCLUIR EN REPOSITORIO
+# ============================================================================
+# Las imágenes se almacenan en Google Drive para entrenar en Colab
+data/raw/
+data/processed/
+data/metadata.csv
+data/*.csv
 
-# Pero MANTENER metadata para referencia
-!data/metadata.csv
-!data/raw/HAM10000_metadata.csv
+# ============================================================================
+# MODELOS Y CHECKPOINTS (demasiado grandes)
+# ============================================================================
+models/
+*.h5
+*.tflite
+*.pb
+*.onnx
+checkpoints/
 
-# Datos procesados - INCLUIR para Colab
-# (Los datos procesados divididos en train/val/test son manejables)
-!data/processed/
-
-# Modelos grandes (opcional - comentar si quieres incluir)
-# models/*.h5
-# models/tflite/*.tflite
-
-# Checkpoints intermedios
-models/checkpoints/*.h5
-
+# ============================================================================
 # Logs
+# ============================================================================
 *.log
 logs/
+wandb/
+
+# ============================================================================
+# Sistema
+# ============================================================================
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ============================================================================
+# Específico del proyecto
+# ============================================================================
+.env
+.env.local
+config.local.yaml
