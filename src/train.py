@@ -2,12 +2,11 @@
 Training pipeline for skin lesion classification using HAM10000 dataset.
 Includes bias mitigation through dark skin simulation and TFLite optimization for Raspberry Pi.
 
-Author: Computer Vision & MLOps Team
-Version: 1.0
+Uso:
+  python src/train.py --data_dir data/processed --batch_size 32 --epochs 50 --tflite float16 --fine_tune
 """
 
 import os
-import sys
 import argparse
 from pathlib import Path
 import numpy as np
@@ -17,27 +16,27 @@ from tensorflow.keras import layers, models
 from tensorflow.keras.applications import EfficientNetB0
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import classification_report, confusion_matrix
 import logging
+import matplotlib.pyplot as plt
+import pandas as pd
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 # Dynamic path resolution
-PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
 MODELS_DIR = PROJECT_ROOT / "models"
 CHECKPOINTS_DIR = MODELS_DIR / "checkpoints"
 TFLITE_DIR = MODELS_DIR / "tflite"
 
-# Ensure directories exist
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
-TFLITE_DIR.mkdir(parents=True, exist_ok=True)
+for d in (MODELS_DIR, CHECKPOINTS_DIR, TFLITE_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 
 # Configuration
 CONFIG = {
@@ -62,433 +61,428 @@ HAM10000_CLASSES = {
 }
 
 
-def create_augmentation_pipeline_with_bias_mitigation():
+def create_augmentation_pipeline(image_size=(224, 224)):
     """
-    Creates a tf.keras.Sequential augmentation pipeline with dark skin bias mitigation.
-    
-    Rationale:
-    - Standard CNN architectures like EfficientNetB0 trained on ImageNet can exhibit
-      disparities in performance across different skin tones due to underrepresentation
-      of darker skin in training data (Buolamwini & Buolamwini, 2018).
-    - Unlike unsupervised methods (e.g., K-Means clustering), CNNs learn semantic
-      features through supervised learning, enabling them to capture malignancy patterns
-      across varying skin tones when augmented appropriately (Nawaz et al., 2022).
-    - Dark Skin Simulation Block: Uses RandomBrightness (biased towards darkening,
-      factor -0.2 to 0.1) combined with RandomContrast to simulate low-contrast
-      environments characteristic of melanated skin, improving model robustness.
-    
-    References:
-    - Nawaz et al. (2022): "Bias in Deep Learning: Fairness in Skin Lesion Classification"
-    - Buolamwini & Buolamwini (2018): "Gender Shades: Intersectional Accuracy Disparities"
-    
-    Returns:
-        tf.keras.Sequential: Augmentation pipeline
+    Crea pipeline de augmentación con mitigación de sesgo (dark skin simulation).
+    Compatible con múltiples versiones de TensorFlow.
     """
+    def darken_and_contrast(x):
+        x = tf.image.random_brightness(x, max_delta=0.15)
+        x = tf.image.random_contrast(x, lower=0.85, upper=1.15)
+        return x
+    
     return tf.keras.Sequential([
-        # Dark Skin Simulation Block (Bias Mitigation)
-        layers.RandomBrightness(factor=(-0.2, 0.1), seed=42),  # Biased towards darkening
-        layers.RandomContrast(factor=0.2, seed=42),
-        
-        # Geometric Augmentations
+        layers.Lambda(lambda x: darken_and_contrast(x)),
         layers.RandomFlip("horizontal", seed=42),
-        layers.RandomFlip("vertical", seed=42),
-        layers.RandomRotation(0.2, seed=42),
-        
-        # Additional Augmentations for Robustness
-        layers.RandomZoom(0.2, seed=42),
-        layers.RandomTranslation(height_factor=0.1, width_factor=0.1, seed=42),
-        
-        # Color Jittering
-        layers.RandomContrast(factor=0.15, seed=42),
-        layers.GaussianNoise(stddev=0.02),
-    ], name='augmentation_pipeline')
+        layers.RandomRotation(0.12, seed=42),
+        layers.RandomZoom(0.12, seed=42),
+        layers.RandomTranslation(0.08, 0.08, seed=42),
+        layers.GaussianNoise(0.02),
+    ], name="augmentation")
 
 
 def build_model(num_classes=7, input_shape=(224, 224, 3)):
     """
-    Builds EfficientNetB0-based model for skin lesion classification.
-    
-    Architecture:
-    - Base: EfficientNetB0 pretrained on ImageNet (transfer learning)
-    - Head: GlobalAveragePooling2D -> Dropout(0.2) -> Dense(num_classes)
-    
-    Why EfficientNetB0 over K-Means?
-    - CNNs perform supervised feature learning, capturing semantic patterns of malignancy
-    - K-Means is unsupervised; lacks ability to learn discriminative features for
-      medical classification and cannot capture class-specific patterns (e.g., asymmetry,
-      color variation in melanoma vs. benign nevi)
-    - EfficientNetB0 is computationally efficient, suitable for edge deployment (Raspberry Pi 5)
-    - Transfer learning leverages ImageNet knowledge, reducing training time and data requirements
+    Construye modelo EfficientNetB0 para clasificación de lesiones cutáneas.
     
     Args:
-        num_classes (int): Number of output classes
-        input_shape (tuple): Input image shape
-        
+        num_classes: Número de clases (7 para HAM10000)
+        input_shape: Forma de entrada (224, 224, 3)
+    
     Returns:
-        tf.keras.Model: Compiled model
+        Modelo Keras compilado
     """
     inputs = keras.Input(shape=input_shape)
+    aug = create_augmentation_pipeline(input_shape[:2])(inputs)
+    x = layers.Rescaling(1.0 / 255.0)(aug)
     
-    # Augmentation pipeline
-    x = create_augmentation_pipeline_with_bias_mitigation()(inputs)
-    
-    # Normalization
-    x = layers.Rescaling(1./255.)(x)
-    
-    # EfficientNetB0 base model
-    base_model = EfficientNetB0(
-        weights='imagenet',
+    base = EfficientNetB0(
+        weights="imagenet",
         include_top=False,
         input_shape=input_shape
     )
+    base.trainable = False
     
-    # Freeze base model weights initially
-    base_model.trainable = False
-    
-    # Forward pass
-    x = base_model(x, training=False)
+    x = base(x, training=False)
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dropout(0.2)(x)
-    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    x = layers.Dropout(0.3)(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
     
-    model = models.Model(inputs=inputs, outputs=outputs, name='EfficientNetB0_SkinLesionClassifier')
-    
+    model = models.Model(inputs=inputs, outputs=outputs, name="EfficientNetB0_SkinLesion")
     return model
 
 
-def load_data(data_dir, image_size=(224, 224), batch_size=32):
+def make_datasets(processed_dir, image_size=(224, 224), batch_size=32):
     """
-    Loads and preprocesses training data from directory structure.
+    Carga datasets desde estructura de carpetas train/val/test.
     
-    Expected directory structure:
-    data/processed/
-    ├── train/
-    │   ├── akiec/
-    │   ├── bcc/
-    │   └── ...
-    ├── val/
-    └── test/
-    
-    Args:
-        data_dir (Path): Path to processed data directory
-        image_size (tuple): Target image size
-        batch_size (int): Batch size
-        
-    Returns:
-        tuple: (train_dataset, val_dataset, test_dataset)
+    Estructura esperada:
+      processed/train/<clase>/*.jpg
+      processed/val/<clase>/*.jpg
+      processed/test/<clase>/*.jpg
     """
-    logger.info(f"Loading data from {data_dir}")
+    logger.info(f"Cargando datos desde: {processed_dir}")
     
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
-    
-    # Data generators
-    train_datagen = ImageDataGenerator(
-        rescale=1./255,
-        rotation_range=20,
-        width_shift_range=0.2,
-        height_shift_range=0.2,
-        horizontal_flip=True,
-        vertical_flip=True,
-        zoom_range=0.2,
-        fill_mode='nearest'
-    )
-    
-    val_test_datagen = ImageDataGenerator(rescale=1./255)
-    
-    # Load datasets
-    train_path = data_dir / "train"
-    val_path = data_dir / "val"
-    test_path = data_dir / "test"
-    
-    train_dataset = train_datagen.flow_from_directory(
-        train_path,
-        target_size=image_size,
+    train_ds = tf.keras.preprocessing.image_dataset_from_directory(
+        processed_dir / "train",
+        labels="inferred",
+        label_mode="categorical",
+        image_size=image_size,
         batch_size=batch_size,
-        class_mode='categorical',
-        shuffle=True
+        shuffle=True,
+        seed=42
     )
     
-    val_dataset = val_test_datagen.flow_from_directory(
-        val_path,
-        target_size=image_size,
+    val_ds = tf.keras.preprocessing.image_dataset_from_directory(
+        processed_dir / "val",
+        labels="inferred",
+        label_mode="categorical",
+        image_size=image_size,
         batch_size=batch_size,
-        class_mode='categorical',
-        shuffle=False
+        shuffle=False,
+        seed=42
     )
     
-    test_dataset = val_test_datagen.flow_from_directory(
-        test_path,
-        target_size=image_size,
+    test_ds = tf.keras.preprocessing.image_dataset_from_directory(
+        processed_dir / "test",
+        labels="inferred",
+        label_mode="categorical",
+        image_size=image_size,
         batch_size=batch_size,
-        class_mode='categorical',
-        shuffle=False
+        shuffle=False,
+        seed=42
     )
     
-    logger.info(f"Train samples: {train_dataset.samples}")
-    logger.info(f"Validation samples: {val_dataset.samples}")
-    logger.info(f"Test samples: {test_dataset.samples}")
+    # Cache y prefetch para mejor performance
+    AUTOTUNE = tf.data.AUTOTUNE
+    train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
+    val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+    test_ds = test_ds.cache().prefetch(buffer_size=AUTOTUNE)
     
-    return train_dataset, val_dataset, test_dataset
+    class_names = train_ds.class_names
+    logger.info(f"Clases detectadas: {class_names}")
+    logger.info(f"Train samples: {train_ds.cardinality().numpy() * batch_size}")
+    logger.info(f"Val samples: {val_ds.cardinality().numpy() * batch_size}")
+    logger.info(f"Test samples: {test_ds.cardinality().numpy() * batch_size}")
+    
+    return train_ds, val_ds, test_ds, class_names
 
 
-def train_model(model, train_dataset, val_dataset, epochs=100, learning_rate=1e-3):
-    """
-    Trains the model with callbacks for early stopping and checkpoint saving.
+def compute_class_weights_from_dataset(train_ds, class_names):
+    """Calcula pesos de clases para desbalance."""
+    counts = np.zeros(len(class_names), dtype=int)
     
-    Args:
-        model (tf.keras.Model): Model to train
-        train_dataset: Training data generator
-        val_dataset: Validation data generator
-        epochs (int): Number of epochs
-        learning_rate (float): Learning rate for Adam optimizer
-    """
-    logger.info("Compiling model...")
+    for _, labels in train_ds.unbatch():
+        idx = int(tf.argmax(labels).numpy())
+        counts[idx] += 1
     
-    optimizer = Adam(learning_rate=learning_rate)
+    labels_array = []
+    for i, c in enumerate(counts):
+        labels_array += [i] * c
+    
+    cw = compute_class_weight(
+        class_weight="balanced",
+        classes=np.arange(len(class_names)),
+        y=np.array(labels_array)
+    )
+    
+    return {i: float(w) for i, w in enumerate(cw)}
+
+
+def train_model(model, train_ds, val_ds, epochs=50, lr=1e-3, class_weight=None):
+    """Entrena el modelo."""
+    optimizer = Adam(learning_rate=lr)
     model.compile(
         optimizer=optimizer,
-        loss='categorical_crossentropy',
-        metrics=['accuracy', keras.metrics.Precision(), keras.metrics.Recall()]
+        loss="categorical_crossentropy",
+        metrics=[
+            "accuracy",
+            keras.metrics.Precision(name="precision"),
+            keras.metrics.Recall(name="recall")
+        ]
     )
     
-    # Callbacks
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=15,
-        restore_best_weights=True,
-        verbose=1
-    )
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=4,
+            min_lr=1e-7,
+            verbose=1
+        ),
+        ModelCheckpoint(
+            filepath=str(CHECKPOINTS_DIR / "best_model.h5"),
+            monitor="val_loss",
+            save_best_only=True,
+            verbose=1
+        )
+    ]
     
-    model_checkpoint = ModelCheckpoint(
-        filepath=str(CHECKPOINTS_DIR / 'model_epoch_{epoch:02d}_val_acc_{val_accuracy:.3f}.h5'),
-        monitor='val_accuracy',
-        save_best_only=True,
-        verbose=1
-    )
-    
-    reduce_lr = ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.5,
-        patience=5,
-        min_lr=1e-7,
-        verbose=1
-    )
-    
-    logger.info("Starting training...")
-    
+    logger.info("Iniciando entrenamiento...")
     history = model.fit(
-        train_dataset,
-        validation_data=val_dataset,
+        train_ds,
+        validation_data=val_ds,
         epochs=epochs,
-        callbacks=[early_stopping, model_checkpoint, reduce_lr],
+        callbacks=callbacks,
+        class_weight=class_weight,
         verbose=1
     )
     
     return history
 
 
-def fine_tune_model(model, train_dataset, val_dataset, epochs=20, learning_rate=1e-5):
-    """
-    Fine-tunes the base model after initial training.
+def find_base_model_in_model(model):
+    """Encuentra el modelo base EfficientNet dentro del grafo."""
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.Model):
+            if "efficientnet" in layer.name.lower():
+                return layer
     
-    Args:
-        model (tf.keras.Model): Trained model
-        train_dataset: Training data generator
-        val_dataset: Validation data generator
-        epochs (int): Number of fine-tuning epochs
-        learning_rate (float): Lower learning rate for fine-tuning
-    """
-    logger.info("Fine-tuning base model...")
+    for layer in model.layers:
+        if hasattr(layer, "weights") and layer.weights:
+            if any("efficientnet" in w.name.lower() for w in layer.weights):
+                return layer
     
-    # Unfreeze base model
-    base_model = model.layers[2]  # EfficientNetB0 layer
-    base_model.trainable = True
+    raise RuntimeError("No se encontró el modelo base EfficientNet")
+
+
+def fine_tune_model(model, train_ds, val_ds, unfreeze_frac=0.2, epochs=10, lr=1e-5):
+    """Fine-tuning del modelo base."""
+    logger.info("Iniciando fine-tuning...")
     
-    # Freeze first 80% of layers
-    num_layers = len(base_model.layers)
-    for layer in base_model.layers[:int(0.8 * num_layers)]:
-        layer.trainable = False
+    base = find_base_model_in_model(model)
+    base.trainable = True
     
-    # Recompile with lower learning rate
-    optimizer = Adam(learning_rate=learning_rate)
+    num_layers = len(base.layers)
+    freeze_until = int(num_layers * (1.0 - unfreeze_frac))
+    
+    for i, layer in enumerate(base.layers):
+        layer.trainable = i >= freeze_until
+    
+    logger.info(
+        f"Fine-tune: unfreezing top {unfreeze_frac*100:.1f}% layers "
+        f"(freeze_until={freeze_until}/{num_layers})"
+    )
+    
     model.compile(
-        optimizer=optimizer,
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
+        optimizer=Adam(lr),
+        loss="categorical_crossentropy",
+        metrics=["accuracy"]
     )
     
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=10,
-        restore_best_weights=True,
-        verbose=1
-    )
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=6,
+            restore_best_weights=True,
+            verbose=1
+        )
+    ]
     
     history = model.fit(
-        train_dataset,
-        validation_data=val_dataset,
+        train_ds,
+        validation_data=val_ds,
         epochs=epochs,
-        callbacks=[early_stopping],
+        callbacks=callbacks,
         verbose=1
     )
     
     return history
 
 
-def convert_to_tflite(model, representative_data_gen, output_path):
-    """
-    Converts trained model to TFLite format with quantization for Raspberry Pi.
+def evaluate_model(model, test_ds, class_names, out_dir):
+    """Evalúa el modelo y genera reportes."""
+    logger.info("Evaluando modelo...")
     
-    Applies tf.lite.Optimize.DEFAULT for:
-    - Dynamic range quantization
-    - Reduced model size
-    - Faster inference on CPU
+    y_true = []
+    y_pred = []
     
-    Args:
-        model (tf.keras.Model): Trained model
-        representative_data_gen: Generator for representative data
-        output_path (Path): Path to save .tflite file
-    """
-    logger.info("Converting model to TFLite format...")
+    for batch in test_ds.unbatch().batch(1):
+        x, y = batch
+        p = model.predict(x, verbose=0)
+        y_true.append(int(tf.argmax(y[0]).numpy()))
+        y_pred.append(int(np.argmax(p[0])))
     
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    report = classification_report(
+        y_true,
+        y_pred,
+        target_names=class_names,
+        digits=4,
+        output_dict=False
+    )
+    logger.info(f"Classification report:\n{report}")
+    
+    cm = confusion_matrix(y_true, y_pred)
+    
+    # Guardar reportes
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(cm, index=class_names, columns=class_names).to_csv(
+        Path(out_dir) / "confusion_matrix.csv"
+    )
+    
+    with open(Path(out_dir) / "classification_report.txt", "w") as f:
+        f.write(report)
+    
+    logger.info(f"Reportes guardados en: {out_dir}")
+    
+    return report, cm
+
+
+def convert_to_tflite(keras_model, val_ds, output_path, tflite_format="float16"):
+    """Convierte modelo a TFLite."""
+    logger.info(f"Convirtiendo a TFLite formato: {tflite_format}")
+    
+    converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     
-    # Representative dataset for quantization
-    def representative_dataset():
-        for img_batch, _ in representative_data_gen:
-            yield [tf.cast(img_batch, tf.float32)]
-    
-    converter.representative_dataset = representative_dataset
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS_INT8
-    ]
-    converter.inference_input_type = tf.uint8
-    converter.inference_output_type = tf.uint8
+    if tflite_format == "float16":
+        converter.target_spec.supported_types = [tf.float16]
+    elif tflite_format == "int8":
+        def representative_gen():
+            for images, _ in val_ds.take(100):
+                yield [tf.cast(images, tf.float32)]
+        
+        converter.representative_dataset = representative_gen
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+        converter.inference_input_type = tf.uint8
+        converter.inference_output_type = tf.uint8
     
     tflite_model = converter.convert()
     
-    # Save TFLite model
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'wb') as f:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as f:
         f.write(tflite_model)
     
-    logger.info(f"TFLite model saved: {output_path}")
-    logger.info(f"Model size: {len(tflite_model) / 1024 / 1024:.2f} MB")
+    size_mb = len(tflite_model) / 1024 / 1024
+    logger.info(f"TFLite guardado: {output_path} ({size_mb:.2f} MB)")
 
 
-def evaluate_model(model, test_dataset):
-    """
-    Evaluates model on test set.
+def plot_history(history, out_dir):
+    """Plotea historia de entrenamiento."""
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
     
-    Args:
-        model (tf.keras.Model): Trained model
-        test_dataset: Test data generator
-    """
-    logger.info("Evaluating model on test set...")
+    # Loss
+    plt.figure(figsize=(10, 4))
+    plt.plot(history.history.get("loss", []), label="loss")
+    plt.plot(history.history.get("val_loss", []), label="val_loss")
+    plt.legend()
+    plt.title("Loss")
+    plt.xlabel("Epoch")
+    plt.savefig(Path(out_dir) / "loss.png")
+    plt.close()
     
-    results = model.evaluate(test_dataset, verbose=1)
+    # Accuracy
+    plt.figure(figsize=(10, 4))
+    plt.plot(history.history.get("accuracy", []), label="accuracy")
+    plt.plot(history.history.get("val_accuracy", []), label="val_accuracy")
+    plt.legend()
+    plt.title("Accuracy")
+    plt.xlabel("Epoch")
+    plt.savefig(Path(out_dir) / "accuracy.png")
+    plt.close()
     
-    logger.info(f"Test Loss: {results[0]:.4f}")
-    logger.info(f"Test Accuracy: {results[1]:.4f}")
-    logger.info(f"Test Precision: {results[2]:.4f}")
-    logger.info(f"Test Recall: {results[3]:.4f}")
+    logger.info(f"Gráficas guardadas en: {out_dir}")
 
 
-def main(args):
-    """
-    Main training pipeline.
-    
-    Args:
-        args: Command line arguments
-    """
-    logger.info("=" * 80)
-    logger.info("HAM10000 Skin Lesion Classification - Training Pipeline")
-    logger.info("=" * 80)
-    logger.info(f"Project root: {PROJECT_ROOT}")
-    logger.info(f"Data directory: {DATA_DIR}")
-    logger.info(f"Models directory: {MODELS_DIR}")
-    
-    # Check if data exists
-    if not DATA_DIR.exists():
-        raise FileNotFoundError(
-            f"Processed data directory not found: {DATA_DIR}\n"
-            "Please run 'python download_HAM.py' first to download and process data."
-        )
-    
-    # Load data
-    train_dataset, val_dataset, test_dataset = load_data(
-        DATA_DIR,
-        image_size=CONFIG['image_size'],
-        batch_size=CONFIG['batch_size']
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Entrenar modelo EfficientNetB0 para clasificación de lesiones cutáneas"
+    )
+    parser.add_argument(
+        "--data_dir",
+        default=str(DATA_PROCESSED),
+        help="Directorio con datos procesados (train/val/test)"
+    )
+    parser.add_argument("--image_size", type=int, default=224)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--learning_rate", type=float, default=1e-3)
+    parser.add_argument("--fine_tune", action="store_true", help="Habilitar fine-tuning")
+    parser.add_argument("--tflite", action="store_true", help="Exportar a TFLite")
+    parser.add_argument(
+        "--tflite_format",
+        choices=["float16", "int8"],
+        default="float16",
+        help="Formato de TFLite"
     )
     
-    # Build model
-    logger.info("Building model architecture...")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    
+    logger.info("=" * 80)
+    logger.info("Entrenamiento de Modelo de Clasificación de Lesiones Cutáneas")
+    logger.info("=" * 80)
+    
+    # Cargar datos
+    train_ds, val_ds, test_ds, class_names = make_datasets(
+        Path(args.data_dir),
+        image_size=(args.image_size, args.image_size),
+        batch_size=args.batch_size
+    )
+    
+    # Construir modelo
+    logger.info("Construyendo modelo...")
     model = build_model(
-        num_classes=CONFIG['num_classes'],
-        input_shape=(*CONFIG['image_size'], 3)
+        num_classes=len(class_names),
+        input_shape=(args.image_size, args.image_size, 3)
     )
-    
     model.summary()
     
-    # Initial training
-    logger.info("Phase 1: Initial training with frozen base model")
-    history_initial = train_model(
+    # Calcular pesos de clases
+    class_weight = compute_class_weights_from_dataset(train_ds, class_names)
+    logger.info(f"Pesos de clases: {class_weight}")
+    
+    # Entrenamiento inicial
+    history = train_model(
         model,
-        train_dataset,
-        val_dataset,
-        epochs=CONFIG['epochs'],
-        learning_rate=CONFIG['learning_rate']
+        train_ds,
+        val_ds,
+        epochs=args.epochs,
+        lr=args.learning_rate,
+        class_weight=class_weight
     )
     
-    # Fine-tuning (optional)
+    # Plotear historia
+    plot_history(history, CHECKPOINTS_DIR)
+    
+    # Fine-tuning
     if args.fine_tune:
-        logger.info("Phase 2: Fine-tuning base model")
-        history_finetune = fine_tune_model(
+        logger.info("Realizando fine-tuning...")
+        fine_tune_model(
             model,
-            train_dataset,
-            val_dataset,
-            epochs=20,
-            learning_rate=1e-5
+            train_ds,
+            val_ds,
+            unfreeze_frac=0.2,
+            epochs=10,
+            lr=1e-5
         )
     
-    # Evaluate
-    evaluate_model(model, test_dataset)
+    # Evaluación
+    evaluate_model(model, test_ds, class_names, CHECKPOINTS_DIR)
     
-    # Save model
+    # Guardar modelo
     model_path = MODELS_DIR / "skin_lesion_classifier.h5"
     model.save(model_path)
-    logger.info(f"Model saved: {model_path}")
+    logger.info(f"Modelo guardado: {model_path}")
     
-    # Convert to TFLite
+    # Exportar TFLite
     if args.tflite:
-        tflite_path = TFLITE_DIR / "skin_lesion_classifier_quantized.tflite"
-        convert_to_tflite(model, val_dataset, tflite_path)
+        tflite_out = TFLITE_DIR / f"skin_lesion_classifier_{args.tflite_format}.tflite"
+        convert_to_tflite(model, val_ds, tflite_out, tflite_format=args.tflite_format)
     
     logger.info("=" * 80)
-    logger.info("Training completed successfully!")
+    logger.info("¡Entrenamiento completado!")
     logger.info("=" * 80)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Train skin lesion classification model on HAM10000 dataset"
-    )
-    parser.add_argument(
-        '--fine-tune',
-        action='store_true',
-        default=False,
-        help='Enable fine-tuning of base model'
-    )
-    parser.add_argument(
-        '--tflite',
-        action='store_true',
-        default=True,
-        help='Convert model to TFLite format for Raspberry Pi'
-    )
-    
-    args = parser.parse_args()
-    
-    main(args)
+    main()
