@@ -6,22 +6,11 @@ import subprocess
 import os
 from datetime import datetime
 
-
-import RPi.GPIO as GPIO
-import time
+# 🔹 Librería para el botón en Raspberry Pi 5
+from gpiozero import Button
 
 # Carpeta donde se guardarán las fotos
 CARPETA_FOTOS = os.path.expanduser("~/fotos")
-
-
-PIN_BOTON = 17  # GPIO que usarás para el botón
-
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(PIN_BOTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-# Para antirrebote por software
-ULTIMO_TIEMPO_PULSO = 0
-DEBOUNCE_SEG = 0.5  # medio segundo
 
 
 def tomar_foto():
@@ -77,28 +66,16 @@ def tomar_foto():
         )
 
 
-def revisar_boton():
-    global ULTIMO_TIEMPO_PULSO
-    # Como usamos pull-up, valor 0 significa "botón presionado"
-    if GPIO.input(PIN_BOTON) == 0:
-        ahora = time.time()
-        if (ahora - ULTIMO_TIEMPO_PULSO) > DEBOUNCE_SEG:
-            ULTIMO_TIEMPO_PULSO = ahora
-            tomar_foto()
-    # Volvemos a revisar en 50 ms sin bloquear la interfaz
-    ventana.after(50, revisar_boton)
-
-
-
-def al_cerrar():
-    GPIO.cleanup()
-    ventana.destroy()
-
-
-# Ventana principal
+# ==== Ventana principal ====
 ventana = tk.Tk()
 ventana.title("Cámara Raspberry Pi (rpicam-still)")
 ventana.geometry("400x350")
+
+
+def al_cerrar():
+    """Callback al cerrar la ventana."""
+    ventana.destroy()
+
 
 ventana.protocol("WM_DELETE_WINDOW", al_cerrar)
 
@@ -181,7 +158,24 @@ tk.Label(
     wraplength=380
 ).pack(pady=5)
 
-# Iniciar revisión del botón
-revisar_boton()
+# ==== Botón físico con gpiozero (GPIO 17) ====
 
+# Usamos pull_up=True: el pin normalmente está en 1,
+# y al presionar el botón se conecta a GND → baja a 0.
+boton = Button(17, pull_up=True)
+
+
+def callback_boton():
+    """
+    gpiozero ejecuta esta función en otro hilo.
+    Para no pelear con Tkinter, usamos ventana.after
+    para llamar tomar_foto() en el hilo principal.
+    """
+    ventana.after(0, tomar_foto)
+
+
+# Cuando el botón se PRESIONA, llamamos a la función
+boton.when_pressed = callback_boton
+
+# Iniciar GUI
 ventana.mainloop()
