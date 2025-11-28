@@ -1,159 +1,209 @@
-#  Dermatoscopio Portátil con IA
+# 🏥 Dermatoscopio Portátil con IA
 
-##  Descripción
+## 📋 Descripción
 
 Sistema **de segmentación + clasificación** de lesiones cutáneas usando:
 - **Segmentación YCbCr**: Robusta a variaciones de tono de piel
-- **Clasificación EfficientNetB0**: 3 categorías (Melanoma, Nevo (Lunar), Otro)
+- **Clasificación EfficientNetB0**: 3 categorías (Melanoma, Nevo Benigno, Otros)
 - **Validación en Raspberry Pi 5**: Con cámara en vivo
 
-### Características
+### ✨ Características
 
 - ✅ **Segmentación YCbCr** (desacoplada de luminancia)
 - ✅ **Mitigación de sesgo** con Dark Skin Simulation
-- ✅ **Optimizado para todo tipo de pieles**
-- ✅ **Entrenamiento en Google Colab** (GPU)
-- ✅ **Inferencia Raspberry Pi** (TFLite)
+- ✅ **Optimizado para todo tipo de pieles** (incluidas pieles oscuras)
+- ✅ **Entrenamiento en Google Colab** (GPU gratuita)
+- ✅ **Inferencia Raspberry Pi 5** (TFLite optimizado)
 - ✅ **Visualización dual**: Segmentación + Clasificación
 
 ---
 
-## Pipeline Completo
+## 🚀 INICIO RÁPIDO: Entrenar en Google Colab
 
-### Paso 1: Segmentación (YCbCr)
-```python
-import cv2
-import numpy as np
+### Paso 1: Preparar datos localmente (en tu computadora)
 
-# Cargar imagen
-img = cv2.imread("lesion.jpg")
+```bash
+# 1. Descargar dataset HAM10000 (~10GB)
+python src/01_download_metadata.py --output data/metadata.csv
 
-# Convertir a YCbCr
-img_ycbcr = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+# 2. Procesar y dividir en train/val/test (7 clases → 3 clases)
+python src/03_data_pipeline.py --meta data/metadata.csv --out data/processed
 
-# Umbralizar para segmentar
-_, img_segmentada = cv2.threshold(img_ycbcr[:,:,0], 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+# 3. Crear ZIP comprimido
+python create_data_zip.py --output data_processed.zip
 
-# Guardar resultado
-cv2.imwrite("segmentacion.jpg", img_segmentada)
+# 4. Verificar tamaño (debe ser ~2.3GB)
+ls -lh data_processed.zip
 ```
-Imagen Original → YCbCr → Análisis Cb-Cr → Máscara → ROI
 
-### Paso 2: Clasificación (EfficientNetB0)
-ROI → 224×224 → EfficientNetB0 → Probabilidades → Clase
+### Paso 2: Subir a Google Drive
+
+1. Ve a **Google Drive**: https://drive.google.com
+2. Sube `data_processed.zip` a **Mi unidad** (carpeta raíz)
+
+### Paso 3: Entrenar en Google Colab
+
+Ve a **Google Colab**: https://colab.research.google.com
+
+**Copia EXACTAMENTE esto en UNA SOLA CELDA:**
+
 ```python
-import tensorflow as tf
-import numpy as np
-from PIL import Image
+# Celda única para Colab - VERSIÓN CORREGIDA
+import subprocess, sys, os
 
-# Cargar modelo
-interpreter = tf.lite.Interpreter("models/tflite/skin_lesion_classifier_float16.tflite")
-interpreter.allocate_tensors()
+print("[1/6] Instalando dependencias...")
+for pkg in ['tensorflow', 'scikit-learn', 'pandas', 'matplotlib', 'opencv-python']:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+print("✓ Listo\n")
 
-# Preprocesar imagen
-img = Image.open("lesion.jpg").resize((224, 224))
-img_array = np.array(img, dtype=np.uint8)
-img_array = np.expand_dims(img_array, axis=0)
+print("[2/6] Montando Google Drive...")
+from google.colab import drive
+drive.mount('/content/drive')
+print("✓ Listo\n")
 
-# Inferir
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-interpreter.set_tensor(input_details[0]['index'], img_array)
-interpreter.invoke()
+print("[3/6] Clonando repositorio...")
+os.chdir('/content')
+os.system('git clone https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git 2>/dev/null')
+os.chdir('dermatoscopio-portatil-IA')
+print("✓ Listo\n")
 
-# Obtener resultados
-predictions = interpreter.get_tensor(output_details[0]['index'])
-class_names = ['mel', 'nv', 'other']
-result = class_names[np.argmax(predictions)]
-confidence = np.max(predictions)
+print("[4/6] Descargando datos...")
+os.system("cp '/content/drive/MyDrive/data_processed.zip' .")
 
-print(f"{result}: {confidence*100:.1f}%")
+# IMPORTANTE: Usar -v (verbose) para ver progreso, y verificar resultado
+print("Descomprimiendo...")
+result = os.system("unzip -q data_processed.zip && echo 'OK' || echo 'ERROR'")
+
+# Verificar que se descomprimió correctamente
+import glob
+train_mel = glob.glob('data/processed/train/mel/*.jpg')
+train_nv = glob.glob('data/processed/train/nv/*.jpg')
+train_other = glob.glob('data/processed/train/other/*.jpg')
+
+total = len(train_mel) + len(train_nv) + len(train_other)
+print(f"\n✓ Imágenes en TRAIN:")
+print(f"  mel: {len(train_mel)}")
+print(f"  nv: {len(train_nv)}")
+print(f"  other: {len(train_other)}")
+print(f"  TOTAL: {total}\n")
+
+if total == 0:
+    print("❌ ERROR: No se encontraron imágenes")
+    print("Intentando descompresión manual...")
+    os.system("unzip data_processed.zip")
+    print("Verificando de nuevo...")
+    os.system("ls -la data/processed/train/")
+else:
+    print("[5/6] Entrenando modelo...")
+    os.system('python train.py --epochs 30 --fine_tune --tflite')
+    
+    print("\n[6/6] Descargando modelos...")
+    os.system('zip -r -q models.zip models/')
+    from google.colab import files
+    files.download('models.zip')
+    print("✓ Descarga completada")
 ```
-### Paso 3: Visualización
-Original + Contorno | Máscara de Segmentación
-Resultado: [Clase] ([Confianza]%)
+
+**Presiona Ctrl+Enter y espera (15-40 minutos)**
 
 ---
-## Fundamentación Técnica
-¿Por qué YCbCr?
 
-RGB: Luminancia y crominancia entrelazadas (fallos en pieles oscuras)
-
-YCbCr: Y (luminancia) separada de Cb-Cr (crominancia)
-
-Piel normal: Agrupa compactamente en Cb ∈ [77,127], Cr ∈ [133,173]
-Lesiones: Se desvían de este clúster
-
-
-## Parámetros del modelo
-```
-Cb: [77, 127]     # Diferencia de azul
-Cr: [133, 173]    # Diferencia de rojo
-Kernel: 5×5, 11×11, 21×21 ELLIPSE (morfología)
-```
-## Documentación y justificación completa
-Ver: 
-```
-TECHNICAL_DOCUMENTATION.txt
-```
-
-Fundamentación teórica (YCbCr vs otros espacios)
-Arquitectura del sistema
-Flujo de trabajo completo
-Parámetros críticos
-Referencias académicas utilizadas
-
-## Clases del Modelo
+## 📊 Clases del Modelo
 
 | Clase | Descripción | Muestras |
 |-------|-------------|----------|
 | **mel** | Melanoma (maligno) | 1,113 |
-| **nv** | Lunar Benigno | 6,705 |
+| **nv** | Nevo Benigno (Lunar) | 6,705 |
 | **other** | Otras lesiones | 2,197 |
 
-**Total:** 10,015 imágenes
+**Total:** 10,015 imágenes | **División:** 70% train, 15% val, 15% test
 
-## Entrenamiento en Colab
-```
-# Celda 1: Setup
-!pip install -q tensorflow scikit-learn pandas matplotlib
-from google.colab import drive
-drive.mount('/content/drive')
-
-# Celda 2: Clonar + Datos
-!git clone https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git
-%cd dermatoscopio-portatil-IA
-!cp '/content/drive/MyDrive/data_processed.zip' .
-!unzip -q data_processed.zip
-
-# Celda 3: Entrenar
-!python train.py --epochs 30 --fine_tune --tflite
-
-# Celda 4: Descargar
-from google.colab import files
-!zip -r models.zip models/
-files.download('models.zip')
-```
 ---
 
-## Instalación Local
+## 🎯 Pipeline Técnico Completo
+
+### 1. Segmentación (YCbCr)
+
+**Uso local:**
+```python
+from src.segmentation import SkinLesionSegmenter
+
+segmenter = SkinLesionSegmenter(debug=True)
+result = segmenter.segment("lesion.jpg", output_dir="./results/")
+
+if result['success']:
+    print(f"✓ Lesión segmentada")
+    print(f"  Área: {result['area']:.0f} píxeles")
+```
+
+**¿Por qué YCbCr?**
+- RGB: Luminancia y crominancia entrelazadas → **falla en pieles oscuras**
+- YCbCr: Y (luminancia) **SEPARADA** de Cb-Cr (crominancia)
+- Piel normal agrupa en: **Cb ∈ [77,127], Cr ∈ [133,173]** (independiente del tono)
+- Lesiones se desvían de este clúster (detectable en cualquier tono)
+
+### 2. Clasificación (EfficientNetB0)
+
+**Uso local:**
+```python
+from src.inference import SkinLesionInference
+
+inference = SkinLesionInference("models/skin_lesion_classifier.h5")
+result = inference.process_image("lesion.jpg", output_dir="./results/")
+
+if result['success']:
+    print(f"✓ Clasificación: {result['class']}")
+    print(f"✓ Confianza: {result['confidence']*100:.1f}%")
+    for clase, prob in result['all_predictions'].items():
+        print(f"  {clase}: {prob*100:.1f}%")
+```
+
+### 3. Visualización Dual
+
+La salida muestra:
+- **Imagen Original + Contorno** de la lesión
+- **Máscara de Segmentación** (blanco = lesión)
+- **Resultado**: Clase + Confianza (%)
+
+---
+
+## 📱 Uso en Raspberry Pi 5
+
+```python
+from src.raspberry_pi_app import RaspberryPiApp
+
+# Iniciar app
+app = RaspberryPiApp("models/tflite/skin_lesion_classifier_float16.tflite")
+app.run(save_dir="./captures/")
+
+# Controles en vivo:
+# 's' - Capturar imagen y procesar
+# 'q' - Salir
+```
+
+**Requisitos en Raspberry Pi:**
+```bash
+pip install tensorflow tflite-runtime opencv-python pillow numpy
+```
+
+---
+
+## 💻 Instalación Local
 
 ```bash
-git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
+# Clonar
+git clone https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git
 cd dermatoscopio-portatil-IA
 
+# Entorno virtual
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
+# Instalar dependencias
 pip install -r requirements.txt
-
-python train.py --epochs 30 --fine_tune --tflite
 ```
 
----
-
-## Parámetros de train.py
-
+**Entrenar localmente:**
 ```bash
 python train.py \
   --data_dir data/processed \
@@ -167,100 +217,4 @@ python train.py \
 
 ---
 
-## Estructura del Repositorio
-```
-dermatoscopio-portatil-IA/
-├── README.md
-├── requirements.txt
-├── train.py
-├── .gitignore
-├── src/
-│   ├── 00_diagnóstico.py
-│   ├── 00_make_metadata.py
-│   ├── 01_eda_analysis.py
-│   ├── 02_cluster_embeddings.py
-│   ├── 03_data_pipeline.py
-│   ├── dataset.py
-│   ├── model.py
-│   └── inference.py
-│   ├── raspberry_pi_app.py
-│   ├── segmentation.py
-└── data/
-    └── processed/
-    └── raw/
-
-
-
-```
-# Solución a problemas comunes
-❌ "No se encuentran los datos"
-```
-# Opción 1: Descargar desde GitHub
-wget https://github.com/TU_USUARIO/dermatoscopio-portatil-IA/releases/download/v1.0/data_processed.zip
-unzip data_processed.zip
-
-# Opción 2: Generar localmente
-python src/01_download_metadata.py --output data/metadata.csv
-python src/03_data_pipeline.py --meta data/metadata.csv --out data/processed
-```
-❌ "TensorFlow no detecta GPU"
-```
-import tensorflow as tf
-print(tf.config.list_physical_devices('GPU'))
-# Si está vacío, instala CUDA/cuDNN
-```
-# Salidas del entrenamiento
-Después de ejecutar train.py:
-```
-models/
-├── skin_lesion_classifier.h5              # Keras completo
-├── checkpoints/
-│   ├── training_history.png
-│   ├── confusion_matrix.csv
-│   └── classification_report.txt
-└── tflite/
-    └── skin_lesion_classifier_float16.tflite  # Raspberry Pi
-
-```
-# Uso en Raspberry Pi 
-```
-import tensorflow as tf
-import numpy as np
-from PIL import Image
-
-interpreter = tf.lite.Interpreter("models/tflite/skin_lesion_classifier_float16.tflite")
-interpreter.allocate_tensors()
-
-img = Image.open("lesion.jpg").resize((224, 224))
-img_array = np.array(img, dtype=np.uint8)
-img_array = np.expand_dims(img_array, axis=0)
-
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-interpreter.set_tensor(input_details[0]['index'], img_array)
-interpreter.invoke()
-
-predictions = interpreter.get_tensor(output_details[0]['index'])
-class_names = ['mel', 'nv', 'other']
-result = class_names[np.argmax(predictions)]
-confidence = np.max(predictions)
-
-print(f"{result}: {confidence*100:.1f}%")
-```
-#  Referencias
-Dataset: HAM10000 Kaggle
-
-Paper: The HAM10000 dataset
-
-EfficientNet: Arxiv 1905.11946
-
-Bias in ML: Nawaz et al. 2022
-
-TensorFlow Lite: Documentation
-
-Celebi et al. (2009): Color-based skin lesion boundary detection
-
-Esteva et al. (2019): Dermatologist-level classification
-
-Tan & Le (2019): EfficientNet - Rethinking Model Scaling
-ITU-R BT.601: Estándar YCbCr
+## 📂 Estructura del Repositorio

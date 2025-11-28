@@ -1,11 +1,5 @@
 """
 Pipeline Completo: Segmentación + Clasificación
-
-Flujo:
-1. Segmenta lesión usando YCbCr
-2. Prepara ROI para modelo
-3. Clasifica en 3 categorías (mel, nv, other)
-4. Visualiza resultados
 """
 
 import cv2
@@ -14,7 +8,7 @@ import tensorflow as tf
 from pathlib import Path
 import logging
 
-from segmentation import SkinLesionSegmenter
+from .segmentation import SkinLesionSegmenter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,10 +34,13 @@ class SkinLesionInference:
     def _load_model(self):
         """Carga modelo entrenado."""
         if not self.model_path.exists():
-            raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
+            raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}\nVerifica que extrajiste models.zip")
         
-        self.model = tf.keras.models.load_model(str(self.model_path))
-        logger.info(f"✓ Modelo cargado: {self.model_path}")
+        try:
+            self.model = tf.keras.models.load_model(str(self.model_path))
+            logger.info(f"✓ Modelo cargado: {self.model_path}")
+        except Exception as e:
+            raise RuntimeError(f"Error cargando modelo: {e}")
     
     def process_image(self, image_path, output_dir=None):
         """
@@ -51,12 +48,15 @@ class SkinLesionInference:
         
         Args:
             image_path (str/Path): Ruta a imagen
-            output_dir (Path): Para guardar intermedios
+            output_dir (str/Path): Para guardar intermedios
             
         Returns:
             dict: Resultados
         """
         image_path = Path(image_path)
+        
+        if not image_path.exists():
+            return {'success': False, 'error': f'Imagen no encontrada: {image_path}'}
         
         logger.info(f"\n{'='*60}")
         logger.info(f"Procesando: {image_path.name}")
@@ -64,7 +64,11 @@ class SkinLesionInference:
         
         # PASO 1: Segmentación
         logger.info("\n[1/3] Segmentación YCbCr...")
-        seg_result = self.segmenter.segment(image_path, output_dir)
+        try:
+            seg_result = self.segmenter.segment(image_path, output_dir)
+        except Exception as e:
+            logger.error(f"Error en segmentación: {e}")
+            return {'success': False, 'error': f'Segmentation failed: {e}'}
         
         if not seg_result['success']:
             logger.error("❌ Segmentación fallida")
@@ -89,7 +93,11 @@ class SkinLesionInference:
         
         # PASO 3: Clasificación
         logger.info("\n[3/3] Clasificando...")
-        predictions = self.model.predict(roi_batch, verbose=0)
+        try:
+            predictions = self.model.predict(roi_batch, verbose=0)
+        except Exception as e:
+            logger.error(f"Error en clasificación: {e}")
+            return {'success': False, 'error': f'Classification failed: {e}'}
         
         class_idx = np.argmax(predictions[0])
         confidence = predictions[0][class_idx]
