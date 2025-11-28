@@ -10,6 +10,7 @@ Uso:
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+import sys
 import argparse
 from pathlib import Path
 import numpy as np
@@ -68,38 +69,67 @@ def build_model(num_classes=3):
     return model
 
 def load_datasets(batch_size=32):
-    """Carga datasets."""
+    """Carga datasets con VALIDACIÓN."""
+    from tensorflow.keras import preprocessing
+    
     logger.info("📂 Cargando datasets...")
     
-    train_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        DATA_PROCESSED / "train",
-        labels="inferred",
-        label_mode="categorical",
-        image_size=(224, 224),
-        batch_size=batch_size,
-        shuffle=True,
-        seed=42
-    )
+    # VERIFICAR QUE LOS DIRECTORIOS EXISTEN
+    train_dir = DATA_PROCESSED / "train"
+    val_dir = DATA_PROCESSED / "val"
+    test_dir = DATA_PROCESSED / "test"
     
-    val_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        DATA_PROCESSED / "val",
-        labels="inferred",
-        label_mode="categorical",
-        image_size=(224, 224),
-        batch_size=batch_size,
-        shuffle=False,
-        seed=42
-    )
+    for d in [train_dir, val_dir, test_dir]:
+        if not d.exists():
+            raise FileNotFoundError(f"❌ Directorio no encontrado: {d}")
+        
+        # Verificar que tiene subdirectorios
+        subdirs = list(d.iterdir())
+        if not subdirs:
+            raise FileNotFoundError(f"❌ {d} está vacío")
+        
+        logger.info(f"✓ {d.name}: {len(subdirs)} clases")
     
-    test_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        DATA_PROCESSED / "test",
-        labels="inferred",
-        label_mode="categorical",
-        image_size=(224, 224),
-        batch_size=batch_size,
-        shuffle=False,
-        seed=42
-    )
+    try:
+        logger.info("  Cargando train...")
+        train_ds = preprocessing.image_dataset_from_directory(
+            train_dir,
+            labels="inferred",
+            label_mode="categorical",
+            image_size=(224, 224),
+            batch_size=batch_size,
+            shuffle=True,
+            seed=42
+        )
+        logger.info(f"  ✓ Train cargado")
+        
+        logger.info("  Cargando val...")
+        val_ds = preprocessing.image_dataset_from_directory(
+            val_dir,
+            labels="inferred",
+            label_mode="categorical",
+            image_size=(224, 224),
+            batch_size=batch_size,
+            shuffle=False,
+            seed=42
+        )
+        logger.info(f"  ✓ Val cargado")
+        
+        logger.info("  Cargando test...")
+        test_ds = preprocessing.image_dataset_from_directory(
+            test_dir,
+            labels="inferred",
+            label_mode="categorical",
+            image_size=(224, 224),
+            batch_size=batch_size,
+            shuffle=False,
+            seed=42
+        )
+        logger.info(f"  ✓ Test cargado")
+        
+    except Exception as e:
+        logger.error(f"❌ Error cargando datasets: {e}")
+        raise
     
     # Optimizar
     AUTOTUNE = tf.data.AUTOTUNE
@@ -108,7 +138,7 @@ def load_datasets(batch_size=32):
     test_ds = test_ds.cache().prefetch(AUTOTUNE)
     
     class_names = sorted(train_ds.class_names)
-    logger.info(f"✓ Clases: {class_names}")
+    logger.info(f"✓ Clases encontradas: {class_names}")
     
     return train_ds, val_ds, test_ds, class_names
 
@@ -143,74 +173,88 @@ def main():
     logger.info("=" * 80)
     logger.info("🎓 ENTRENAMIENTO DE MODELO")
     logger.info("=" * 80)
+    logger.info(f"Parámetros:")
+    logger.info(f"  Epochs: {args.epochs}")
+    logger.info(f"  Batch size: {args.batch_size}")
+    logger.info(f"  Learning rate: {args.lr}")
+    logger.info(f"  Fine-tune: {args.fine_tune}")
+    logger.info(f"  TFLite: {args.tflite}\n")
     
     try:
+        # Verificar directorios
+        logger.info("1️⃣ Verificando directorios...")
+        logger.info(f"   Project root: {PROJECT_ROOT}")
+        logger.info(f"   Data dir: {DATA_PROCESSED}")
+        
+        if not DATA_PROCESSED.exists():
+            raise FileNotFoundError(f"❌ {DATA_PROCESSED} no existe")
+        
+        # Listar contenido
+        logger.info(f"   Contenido de {DATA_PROCESSED}:")
+        for item in DATA_PROCESSED.iterdir():
+            logger.info(f"     - {item.name}")
+        
         # Cargar datos
+        logger.info("\n2️⃣ Cargando datasets...")
         train_ds, val_ds, test_ds, class_names = load_datasets(args.batch_size)
         
         # Construir modelo
-        logger.info("\n🏗️ Construyendo modelo...")
-        model = build_model(len(class_names))
-        model.summary()
+        logger.info("\n3️⃣ Construyendo modelo...")
+        from tensorflow.keras import layers, models
+        from tensorflow.keras.applications import EfficientNetB0
+        
+        inputs = tf.keras.Input(shape=(224, 224, 3))
+        x = layers.Rescaling(1.0 / 255.0)(inputs)
+        
+        base = EfficientNetB0(weights="imagenet", include_top=False)
+        base.trainable = False
+        x = base(x, training=False)
+        
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dropout(0.3)(x)
+        outputs = layers.Dense(len(class_names), activation="softmax")(x)
+        
+        model = models.Model(inputs, outputs)
+        logger.info("✓ Modelo construido")
         
         # Compilar
-        logger.info("\n⚙️ Compilando modelo...")
+        logger.info("\n4️⃣ Compilando modelo...")
+        from tensorflow.keras.optimizers import Adam
+        
         model.compile(
             optimizer=Adam(learning_rate=args.lr),
             loss="categorical_crossentropy",
             metrics=["accuracy"]
         )
-        
-        # Pesos
-        class_weights = compute_class_weights(train_ds, class_names)
-        logger.info(f"Pesos: {class_weights}")
+        logger.info("✓ Compilado")
         
         # Entrenar
-        logger.info(f"\n🚀 Entrenando ({args.epochs} épocas)...")
+        logger.info("\n5️⃣ Entrenando...")
+        from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+        
         history = model.fit(
             train_ds,
             validation_data=val_ds,
             epochs=args.epochs,
             callbacks=[
-                EarlyStopping("val_loss", patience=10, restore_best_weights=True),
-                ReduceLROnPlateau("val_loss", factor=0.5, patience=4),
+                EarlyStopping("val_loss", patience=10, restore_best_weights=True, verbose=1),
+                ReduceLROnPlateau("val_loss", factor=0.5, patience=4, verbose=1),
                 ModelCheckpoint(str(CHECKPOINTS_DIR / "best_model.h5"), 
-                              monitor="val_loss", save_best_only=True)
+                              monitor="val_loss", save_best_only=True, verbose=1)
             ],
-            class_weight=class_weights,
             verbose=1
         )
+        logger.info("✓ Entrenamiento completado")
         
-        # Fine-tune
-        if args.fine_tune:
-            logger.info("\n🔧 Fine-tuning...")
-            for layer in model.layers[-20:]:
-                if not isinstance(layer, layers.BatchNormalization):
-                    layer.trainable = True
-            
-            model.compile(
-                optimizer=Adam(1e-5),
-                loss="categorical_crossentropy",
-                metrics=["accuracy"]
-            )
-            
-            model.fit(
-                train_ds,
-                validation_data=val_ds,
-                epochs=10,
-                callbacks=[EarlyStopping("val_loss", patience=5, restore_best_weights=True)],
-                verbose=1
-            )
-        
-        # Guardar modelo
-        logger.info("\n💾 Guardando modelo...")
+        # Guardar
+        logger.info("\n6️⃣ Guardando modelo...")
         model_path = MODELS_DIR / "skin_lesion_classifier.h5"
         model.save(str(model_path))
         logger.info(f"✓ Guardado: {model_path}")
         
         # TFLite
         if args.tflite:
-            logger.info("\n📱 Exportando TFLite...")
+            logger.info("\n7️⃣ Exportando TFLite...")
             converter = tf.lite.TFLiteConverter.from_keras_model(model)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
             converter.target_spec.supported_types = [tf.float16]
@@ -231,7 +275,7 @@ def main():
         return 0
         
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"\n❌ ERROR: {e}")
         import traceback
         traceback.print_exc()
         return 1
