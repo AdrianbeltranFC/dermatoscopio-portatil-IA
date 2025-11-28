@@ -1,138 +1,118 @@
-# Dermatoscopio Portátil con IA
+# 🏥 Dermatoscopio Portátil con IA
 
-## 📋 Descripción del Proyecto
+## 📋 Descripción
 
-Este proyecto busca desarrollar un **dermatoscopio portátil basado en inteligencia artificial** capaz de analizar imágenes de lesiones cutáneas y clasificarlas automáticamente. Utilizamos el dataset **HAM10000**, uno de los conjuntos de datos más grandes y confiables para el diagnóstico asistido por IA de enfermedades de la piel.
+Sistema de **clasificación de lesiones cutáneas mediante IA** usando el dataset HAM10000. Detecta 7 tipos de lesiones de piel con mitigación de sesgo para diferentes tonos de piel.
 
-### Objetivos
-- Crear un modelo de IA para clasificación de lesiones cutáneas
-- Desarrollar una aplicación portátil y accesible
-- Utilizar el dataset HAM10000 para entrenamiento y validación
-- Automatizar la descarga y filtrado de datos
-- Implementar mitigación de sesgo en clasificación por tono de piel
+### ✨ Características
+
+- ✅ **Modelo EfficientNetB0** con Transfer Learning
+- ✅ **Mitigación de sesgo** (Dark Skin Simulation)
+- ✅ **Optimizado para Raspberry Pi 5** (TFLite: 15 MB)
+- ✅ **Entrenamiento en Google Colab** (GPU gratuita)
+- ✅ **Dataset HAM10000** (10,015 imágenes de lesiones cutáneas)
 
 ---
 
-##  Estructura de Carpetas
+## 🚀 Inicio Rápido (Google Colab - RECOMENDADO)
 
+### Opción A: Colab Notebook (más fácil)
+
+```python
+# Copia esto en una celda de Colab (https://colab.research.google.com)
+
+# 1. Montar Drive
+from google.colab import drive
+drive.mount('/content/drive')
+
+# 2. Instalar dependencias
+!pip install -q tensorflow scikit-learn pandas matplotlib
+
+# 3. Descargar datos del repositorio
+!wget -q https://github.com/TU_USUARIO/dermatoscopio-portatil-IA/releases/download/v1.0/data_processed.zip
+!unzip -q data_processed.zip
+
+# 4. Clonar repositorio
+!git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
+%cd dermatoscopio-portatil-IA
+
+# 5. Entrenar
+!python train.py --epochs 50 --fine_tune --tflite
 ```
-dermatoscopio-portatil-IA/    
-├── README.md                 # Este archivo
-├── data/                     # Datos del proyecto
-│   ├── raw/                  # Imágenes descargadas sin procesar (no incluidas en el repo,  se descargan en automático al ejecutar los scripts)
-│   ├── processed/            # Imágenes procesadas y filtradas
-│   └── metadata/             # Archivos CSV con metadatos
-├── download_HAM.py           # Script de descarga automática
-├── src/                      # Código fuente principal
-│   ├── __init__.py
-│   ├── model.py              # Definición del modelo
-│   ├── data_loader.py        # Cargadores de datos
-│   └── inference.py          # Inferencia y predicciones
-├── requirements.txt          # Dependencias del proyecto
-├── .gitignore                # Archivo de exclusiones git
 
+**Resultado:** Modelos listos en `models/` para descargar
+
+---
+
+### Opción B: Script Directo en Colab
+
+```python
+# Celda 1: Setup
+from google.colab import drive
+drive.mount('/content/drive')
+!pip install -q tensorflow scikit-learn pandas matplotlib
+
+# Celda 2: Descargar y entrenar
+!cd /tmp && git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
+!wget https://github.com/TU_USUARIO/dermatoscopio-portatil-IA/releases/download/v1.0/data_processed.zip
+!unzip -q data_processed.zip -d /tmp/dermatoscopio-portatil-IA/
+!cd /tmp/dermatoscopio-portatil-IA && python train.py --epochs 50 --fine_tune --tflite
+
+# Celda 3: Descargar
+from google.colab import files
+!cd /tmp/dermatoscopio-portatil-IA && zip -r models.zip models/
+files.download('models.zip')
 ```
 
 ---
 
-##  Descripción de Carpetas
+## 💻 Instalación Local
 
-### `/data`
-Almacena todos los datos del proyecto:
-- **raw/**: Imágenes descargadas del HAM10000 ( No se incluyen en el repositorio por su tamaño)
-- **processed/**: Imágenes filtradas y preprocesadas listas para entrenamiento
-- **metadata/**: Archivos CSV con información de los pacientes y clasificaciones
+### Requisitos
 
-### `/scripts`
-Contiene scripts de utilidad para automatizar tareas:
-- **download_ham10000.py**: Descarga automática del dataset
-- **filter_data.py**: Filtra y organiza las imágenes
-- **preprocessing.py**: Normalización y augmentación de datos
+- Python 3.8+
+- GPU NVIDIA (opcional, pero recomendado)
+- 20 GB espacio en disco
 
-### `/src`
-Código fuente principal del proyecto bien organizado
+### Pasos
 
-
----
-
-##  Instalación
-
-### Requisitos previos
-- Python 3.8 o superior
-- pip o conda
-
-### Pasos de instalación
-
-1. **Clonar el repositorio**
 ```bash
-git clone <URL_DEL_REPOSITORIO>
+# 1. Clonar repositorio
+git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
 cd dermatoscopio-portatil-IA
-```
 
-2. **Crear un entorno virtual**
-```bash
+# 2. Entorno virtual
 python -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
-```
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-3. **Instalar dependencias**
-```bash
+# 3. Dependencias
 pip install -r requirements.txt
+
+# 4. Descargar datos (solo si entrenas localmente)
+# Descarga data_processed.zip desde GitHub y descomprime en data/
+
+# 5. Entrenar
+python train.py --epochs 50 --fine_tune --tflite
 ```
 
 ---
 
-##  Dataset HAM10000
+## 📊 Dataset HAM10000
 
-### Descarga automática
+| Clase | Nombre | Cantidad | Descripción |
+|-------|--------|----------|-------------|
+| akiec | Actinic Keratosis | 611 | Precanceroso |
+| bcc | Basal Cell Carcinoma | 514 | Cáncer de piel |
+| bkl | Benign Keratosis | 1,099 | Benigno |
+| df | Dermatofibroma | 115 | Fibroma |
+| mel | Melanoma | 1,113 | Melanoma |
+| nv | Melanocytic Nevi | 6,705 | Lunar |
+| vasc | Vascular | 286 | Vasos sanguíneos |
 
-El dataset HAM10000 se descarga y procesa automáticamente ejecutando:
-
-```bash
-python scripts/download_HAM.py
-```
-
-Este script:
-- ✅ Descarga las imágenes del dataset HAM10000
-- ✅ Organiza los archivos en la carpeta `data/raw/`
-- ✅ Genera archivos de metadatos
-
----
-
-## Uso del Proyecto
-
-### Entrenar el modelo
-```bash
-python src/model.py --train --config config.yaml
-```
-
-### Hacer predicciones
-```bash
-python src/inference.py --image <ruta_imagen> --model <modelo_entrenado>
-```
-
-### Ejecutar la aplicación
-```bash
-python app/main.py
-```
+**Total:** 10,015 imágenes | **Distribución:** Train 70%, Val 15%, Test 15%
 
 ---
 
-## Dataset HAM10000
-
-- **10,000 imágenes** de lesiones cutáneas
-- **7 categorías** de diagnóstico
-- **Múltiples fuentes** clínicas confiables
-- Imágenes de alta calidad con metadatos clínicos
-
-⚠️ **Nota**: Las imágenes no se incluyen en el repositorio. Ejecuta el script de descarga la primera vez.
-
----
-
-## Licencia
-
-Este proyecto utiliza el dataset HAM10000.
-
----
+## 🧠 Arquitectura del Modelo
 
 
