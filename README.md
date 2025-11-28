@@ -1,165 +1,93 @@
-# Dermatoscopio Portátil con IA
+# 🏥 Dermatoscopio Portátil con IA
 
-## Descripción
+## 📋 Descripción
 
-Sistema de **clasificación de lesiones cutáneas mediante IA** usando el dataset HAM10000. Detecta 7 tipos de lesiones de piel con mitigación de sesgo para diferentes tonos de piel.
+Sistema de **clasificación de lesiones cutáneas mediante IA** usando el dataset HAM10000. Detecta **3 tipos principales** de lesiones de piel con mitigación de sesgo para diferentes tonos de piel.
 
-### Características
+### ✨ Características
 
 - ✅ **Modelo EfficientNetB0** con Transfer Learning
 - ✅ **Mitigación de sesgo** (Dark Skin Simulation)
 - ✅ **Optimizado para Raspberry Pi 5** (TFLite: 15 MB)
 - ✅ **Entrenamiento en Google Colab** (GPU gratuita)
-- ✅ **Dataset HAM10000** (10,015 imágenes de lesiones cutáneas)
+- ✅ **Dataset HAM10000** (10,015 imágenes → 3 clases)
 
 ---
 
-## Inicio Rápido (Google Colab - RECOMENDADO)
+## 🚀 Inicio Rápido (Google Colab)
 
-### Opción A: Colab Notebook (más fácil)
+Copia y pega en Google Colab: https://colab.research.google.com
 
 ```python
-# Copia esto en una celda de Colab (https://colab.research.google.com)
-
-# 1. Montar Drive
+# Celda 1: Setup básico
+!pip install -q tensorflow scikit-learn pandas matplotlib
 from google.colab import drive
 drive.mount('/content/drive')
 
-# 2. Instalar dependencias
-!pip install -q tensorflow scikit-learn pandas matplotlib
-
-# 3. Descargar datos del repositorio
-!wget -q https://github.com/TU_USUARIO/dermatoscopio-portatil-IA/releases/download/v1.0/data_processed.zip
-!unzip -q data_processed.zip
-
-# 4. Clonar repositorio
+# Celda 2: Clonar repositorio
 !git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
 %cd dermatoscopio-portatil-IA
 
-# 5. Entrenar
-!python train.py --epochs 50 --fine_tune --tflite
-```
+# Celda 3: Descargar datos desde Drive
+# Sube manualmente data_processed.zip a tu Drive, luego:
+!cp '/content/drive/MyDrive/data_processed.zip' .
+!unzip -q data_processed.zip
 
-**Resultado:** Modelos listos en `models/` para descargar
+# Celda 4: Entrenar
+!python train.py --epochs 30 --fine_tune --tflite
 
----
-
-### Opción B: Script Directo en Colab
-
-```python
-# Celda 1: Setup
-from google.colab import drive
-drive.mount('/content/drive')
-!pip install -q tensorflow scikit-learn pandas matplotlib
-
-# Celda 2: Descargar y entrenar
-!cd /tmp && git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
-!wget https://github.com/TU_USUARIO/dermatoscopio-portatil-IA/releases/download/v1.0/data_processed.zip
-!unzip -q data_processed.zip -d /tmp/dermatoscopio-portatil-IA/
-!cd /tmp/dermatoscopio-portatil-IA && python train.py --epochs 50 --fine_tune --tflite
-
-# Celda 3: Descargar
+# Celda 5: Descargar resultados
 from google.colab import files
-!cd /tmp/dermatoscopio-portatil-IA && zip -r models.zip models/
+!zip -r models.zip models/
 files.download('models.zip')
 ```
 
 ---
 
-## Instalación Local
+## 📊 Clases del Modelo
 
-### Requisitos
+| Clase | Descripción | Muestras |
+|-------|-------------|----------|
+| **mel** | Melanoma (maligno) | 1,113 |
+| **nv** | Lunar Benigno | 6,705 |
+| **other** | Otras lesiones | 2,197 |
 
-- Python 3.8+
-- GPU NVIDIA (opcional, pero recomendado)
-- 20 GB espacio en disco
+**Total:** 10,015 imágenes
 
-### Pasos
+---
+
+## 💻 Instalación Local
 
 ```bash
-# 1. Clonar repositorio
 git clone https://github.com/TU_USUARIO/dermatoscopio-portatil-IA.git
 cd dermatoscopio-portatil-IA
 
-# 2. Entorno virtual
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 3. Dependencias
 pip install -r requirements.txt
 
-# 4. Descargar datos (solo si entrenas localmente)
-# Descarga data_processed.zip desde GitHub y descomprime en data/
-
-# 5. Entrenar
-python train.py --epochs 50 --fine_tune --tflite
+python train.py --epochs 30 --fine_tune --tflite
 ```
 
 ---
 
-## Dataset HAM10000
-```
-| Clase | Nombre | Cantidad | Descripción |
-|-------|--------|----------|-------------|
-| akiec | Actinic Keratosis | 611 | Precanceroso |
-| bcc | Basal Cell Carcinoma | 514 | Cáncer de piel |
-| bkl | Benign Keratosis | 1,099 | Benigno |
-| df | Dermatofibroma | 115 | Fibroma |
-| mel | Melanoma | 1,113 | Melanoma |
-| nv | Melanocytic Nevi | 6,705 | Lunar |
-| vasc | Vascular | 286 | Vasos sanguíneos |
-```
-**Total:** 10,015 imágenes | **Distribución:** Train 70%, Val 15%, Test 15%
----
+## 📝 Parámetros de train.py
 
-## Arquitectura del Modelo
-```
-Input (224x224x3)
-    ↓
-[Dark Skin Simulation Augmentation]
-  - RandomBrightness (factor: -0.2 to 0.1)
-  - RandomContrast
-  - RandomFlip, RandomRotation, RandomZoom
-    ↓
-Rescaling (1/255)
-    ↓
-EfficientNetB0 (ImageNet weights, frozen)
-    ↓
-GlobalAveragePooling2D
-    ↓
-Dropout(0.3)
-    ↓
-Dense(7, softmax)
-    ↓
-Output (7 clases)
-```
-
-## Uso del Script train.py
-Parámetros
-```
+```bash
 python train.py \
-  --data_dir data/processed      # Directorio de datos
-  --image_size 224               # Tamaño de imagen
-  --batch_size 32                # Batch size
-  --epochs 50                    # Epochs
-  --learning_rate 1e-3           # Learning rate
-  --fine_tune                    # Habilitar fine-tuning
-  --tflite                       # Exportar a TFLite
-  --tflite_format float16        # float16 o int8
-```
-Ejemplos
-```
-# Entrenamiento rápido (CPU)
-python train.py --epochs 10 --batch_size 16
-
-# Entrenamiento completo (GPU)
-python train.py --epochs 50 --fine_tune --tflite
-
-# Solo exportar TFLite
-python train.py --tflite --tflite_format int8
+  --data_dir data/processed \
+  --epochs 30 \
+  --batch_size 32 \
+  --learning_rate 1e-3 \
+  --fine_tune \
+  --tflite \
+  --tflite_format float16
 ```
 
-# Estructura del Repositorio
+---
+
+## 📂 Estructura del Repositorio
 ```
 dermatoscopio-portatil-IA/
 ├── README.md                      # Este archivo
