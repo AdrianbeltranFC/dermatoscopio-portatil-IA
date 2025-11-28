@@ -3,7 +3,7 @@
 ==================================================================
 
 Uso LOCAL (en tu computadora):
-    python train.py --data_dir data/processed --epochs 50 --fine_tune --tflite
+    python src/04_train.py --data_dir data/processed --epochs 50 --fine_tune --tflite
 
 Uso en GOOGLE COLAB:
     1. Abre: https://colab.research.google.com
