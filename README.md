@@ -90,34 +90,21 @@ python train.py \
 ## 📂 Estructura del Repositorio
 ```
 dermatoscopio-portatil-IA/
-├── README.md                      # Este archivo
-├── requirements.txt               # Dependencias
-├── train.py                       # ⭐ Script único de entrenamiento
-├── .gitignore                     # Git exclusiones
-│
-├── src/                           # Código fuente
-│   ├── __init__.py
-│   ├── 00_diagnóstico.py          # Diagnostica problemas
-│   ├── 01_download_metadata.py    # Descarga dataset
-│   ├── 02_eda_analysis.py         # Análisis exploratorio
-│   ├── 03_data_pipeline.py        # Divide train/val/test
-│   ├── model.py                   # Definición de modelos
-│   ├── data_loader.py             # Cargadores
-│   └── inference.py               # Predicciones
-│
-├── data/                          # (NO en repo, usar Drive)
-│   ├── processed/
-│   │   ├── train/<clase>/
-│   │   ├── val/<clase>/
-│   │   └── test/<clase>/
-│   └── metadata.csv
-│
-├── models/                        # (Generados por entrenamiento)
-│   ├── checkpoints/
-│   ├── tflite/
-│   └── skin_lesion_classifier.h5
-│
-└── notebooks/                     # Jupyter (opcional)
+├── README.md
+├── requirements.txt
+├── train.py
+├── .gitignore
+├── src/
+│   ├── 00_diagnóstico.py
+│   ├── 01_download_metadata.py
+│   ├── 02_eda_analysis.py
+│   ├── 03_data_pipeline.py
+│   ├── model.py
+│   ├── data_loader.py
+│   └── inference.py
+└── data/
+    └── processed/
+
 ```
 # Solución a problemas comunes
 ❌ "No se encuentran los datos"
