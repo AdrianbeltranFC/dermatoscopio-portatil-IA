@@ -33,7 +33,6 @@ venv/
 # Las imágenes se almacenan en Google Drive para entrenar en Colab
 data/raw/
 data/processed/
-data/metadata.csv
 data/*.csv
 
 # ============================================================================
