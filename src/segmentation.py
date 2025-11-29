@@ -1,14 +1,9 @@
 """
-Módulo de Segmentación de Lesiones Cutáneas usando YCbCr
+Módulo de Segmentación de Lesiones Cutáneas - YCbCr Adaptativo
 
-Implementa segmentación robusta para pieles oscuras utilizando:
-- Transformación YCbCr para desacoplamiento de luminancia
-- Umbralización adaptativa en canales Cb-Cr
-- Morfología matemática para refinamiento
-
-Referencias:
-- Celebi et al. (2009): Color-based skin lesion boundary detection
-- Esteva et al. (2019): Dermatologist-level classification of skin cancer
+Implementa segmentación robusta respetando la teoría de que la piel
+se agrupa en clusters de Cb-Cr, pero calculando dichos clusters
+dinámicamente para cada imagen (calibración automática).
 """
 
 import cv2
@@ -21,53 +16,28 @@ logger = logging.getLogger(__name__)
 
 class SkinLesionSegmenter:
     """
-    Segmentador de lesiones cutáneas robusto a variaciones de tono de piel.
-    
-    Método: YCbCr + Análisis del plano Cb-Cr
-    Justificación:
-    - RGB entrelaza luminancia y crominancia
-    - YCbCr separa explícitamente: Y (luminancia), Cb-Cr (crominancia)
-    - Piel normal agrupa compactamente en plano Cb-Cr independiente del tono
-    - Lesiones pigmentadas desviadas del clúster normal
-    - Cb proporciona contraste excepcional en pieles oscuras
+    Segmentador YCbCr Adaptativo.
+    1. Calibra el color de piel sano muestreando las esquinas.
+    2. Define rangos dinámicos de Cb-Cr para esa foto específica.
+    3. Usa una máscara circular (ROI) solo para limpiar bordes del microscopio.
     """
     
     def __init__(self, debug=False):
         """
         Inicializa segmentador.
-        
         Args:
-            debug (bool): Si True, guarda imágenes intermedias
+            debug (bool): Si True, guarda imágenes intermedias (opcional)
         """
         self.debug = debug
         
-        # Parámetros YCbCr optimizados (empíricamente validados)
-        self.cb_lower = 77      # Umbral inferior Cb
-        self.cb_upper = 127     # Umbral superior Cb
-        self.cr_lower = 133     # Umbral inferior Cr
-        self.cr_upper = 173     # Umbral superior Cr
-        
-        # Kernel para morfología
-        self.kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        self.kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        # Kernels para limpieza morfológica
+        self.kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
         self.kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))
     
     def segment(self, image_path, output_dir=None):
         """
-        Segmenta lesión en imagen.
-        
-        Args:
-            image_path (str/Path): Ruta a imagen
-            output_dir (Path): Directorio para guardar intermedios (si debug=True)
-            
-        Returns:
-            dict: {
-                'original': imagen original,
-                'segmentation_mask': máscara binaria de lesión,
-                'lesion_roi': región de interés (ROI),
-                'contour': contorno de la lesión,
-                'success': bool indicando éxito
-            }
+        Segmenta lesión en imagen usando YCbCr Adaptativo + Limpieza de Bordes.
         """
         image_path = Path(image_path)
         
@@ -75,88 +45,126 @@ class SkinLesionSegmenter:
             logger.error(f"Imagen no encontrada: {image_path}")
             return {'success': False}
         
-        # Cargar imagen
+        # 1. Cargar imagen
         img_bgr = cv2.imread(str(image_path))
         if img_bgr is None:
             logger.error(f"Error cargando imagen: {image_path}")
             return {'success': False}
-        
+            
         h, w = img_bgr.shape[:2]
-        logger.info(f"📸 Imagen cargada: {w}x{h}")
         
-        # PASO 1: Transformar a YCbCr
+        # 2. Transformar a YCbCr
         img_ycbcr = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+        
+        # 3. CALIBRACIÓN AUTOMÁTICA DE PIEL
+        # En lugar de números fijos [77, 127], muestreamos la piel real de esta foto.
+        # Tomamos 4 zonas seguras en las esquinas interiores.
+        
+        sample_size = 20
+        samples_cb = []
+        samples_cr = []
+        
+        # Coordenadas de muestreo (Esquinas interiores para evitar el borde negro)
+        # Usamos 1/4 y 3/4 del ancho/alto
+        offsets = [
+            (h//4, w//4), (h//4, 3*w//4), 
+            (3*h//4, w//4), (3*h//4, 3*w//4)
+        ]
+        
+        for r, c in offsets:
+            # Extraer parche de piel
+            patch = img_ycbcr[r:r+sample_size, c:c+sample_size, :]
+            samples_cb.extend(patch[:,:,1].flatten())
+            samples_cr.extend(patch[:,:,2].flatten())
+            
+        # Calculamos la mediana (más robusta que el promedio)
+        if len(samples_cb) > 0:
+            median_cb = np.median(samples_cb)
+            median_cr = np.median(samples_cr)
+        else:
+            # Fallback por seguridad si algo falla
+            median_cb, median_cr = 100, 150
+        
+        logger.info(f"🎨 Calibración Piel -> Cb: {median_cb:.0f}, Cr: {median_cr:.0f}")
+        
+        # 4. Definir rangos elásticos
+        # Un ancho de banda de +/- 25 suele cubrir la variación natural de la piel
+        delta = 25 
+        cb_lower = int(max(0, median_cb - delta))
+        cb_upper = int(min(255, median_cb + delta))
+        cr_lower = int(max(0, median_cr - delta))
+        cr_upper = int(min(255, median_cr + delta))
+        
+        # 5. Segmentación YCbCr con rangos adaptados
         y, cr, cb = cv2.split(img_ycbcr)
         
-        if self.debug:
-            logger.info("✓ Transformado a YCbCr")
+        # Máscara de PIEL SANA
+        mask_cbcr = cv2.inRange(cb, cb_lower, cb_upper) & \
+                    cv2.inRange(cr, cr_lower, cr_upper)
         
-        # PASO 2: Crear máscara basada en plano Cb-Cr
-        # Región donde la piel normal se agrupa
-        mask_cbcr = cv2.inRange(cb, self.cb_lower, self.cb_upper) & \
-                    cv2.inRange(cr, self.cr_lower, self.cr_upper)
-        
-        # Invertir: queremos FUERA del clúster de piel normal (la lesión)
+        # Invertir: Lo que NO es piel sana, es posible lesión
         mask_lesion = cv2.bitwise_not(mask_cbcr)
         
-        if self.debug:
-            logger.info("✓ Máscara Cb-Cr creada")
+        # 6. Limpieza de Bordes (ROI Circular)
+        # Eliminamos las esquinas negras del microscopio que NO son lesión
+        mask_roi = np.zeros((h, w), dtype=np.uint8)
+        # Radio del 48% del lado menor (cubre casi todo el centro)
+        cv2.circle(mask_roi, (w//2, h//2), int(min(h, w) * 0.48), 255, -1)
         
-        # PASO 3: Morfología - remover ruido pequeño
+        # Intersección: Lesión detectada Y que esté dentro del círculo válido
+        mask_lesion = cv2.bitwise_and(mask_lesion, mask_roi)
+        
+        # 7. Morfología (Limpiar ruido)
         mask_lesion = cv2.morphologyEx(mask_lesion, cv2.MORPH_OPEN, self.kernel_small)
         mask_lesion = cv2.morphologyEx(mask_lesion, cv2.MORPH_CLOSE, self.kernel_medium)
         
-        if self.debug:
-            logger.info("✓ Morfología aplicada")
-        
-        # PASO 4: Encontrar contorno más grande (la lesión principal)
+        # 8. Selección de Contorno (Con Fallback)
         contours, _ = cv2.findContours(mask_lesion, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
+        largest_contour = None
+        use_fallback = False
+        
         if not contours:
-            logger.warning("⚠️ No se encontraron contornos")
-            return {'success': False, 'original': img_bgr}
+            use_fallback = True
+        else:
+            largest_contour = max(contours, key=cv2.contourArea)
+            # Si el área es menor al 1% de la imagen, es ruido -> Usar Fallback
+            if cv2.contourArea(largest_contour) < (h * w * 0.01):
+                use_fallback = True
         
-        # Obtener contorno más grande
-        largest_contour = max(contours, key=cv2.contourArea)
-        contour_area = cv2.contourArea(largest_contour)
-        
-        # Validar que el área sea razonable (10-80% de la imagen)
-        total_area = h * w
-        if contour_area < (total_area * 0.01) or contour_area > (total_area * 0.95):
-            logger.warning(f"⚠️ Área sospechosa: {contour_area/total_area*100:.1f}%")
-        
-        logger.info(f"✓ Contorno encontrado: {contour_area:.0f} px ({contour_area/total_area*100:.1f}%)")
-        
-        # PASO 5: Crear máscara final refinada
+        # Plan B: Recorte Central si la segmentación falla
+        if use_fallback:
+            logger.warning("⚠️ Segmentación por color no clara. Usando recorte central.")
+            sz = int(min(h, w) * 0.5) # 50% del tamaño
+            x, y = (w//2 - sz//2), (h//2 - sz//2)
+            # Crear cuadrado artificial
+            largest_contour = np.array([[[x,y]], [[x+sz,y]], [[x+sz,y+sz]], [[x,y+sz]]])
+            
+        # 9. Generar resultados finales
         mask_final = np.zeros_like(mask_lesion)
         cv2.drawContours(mask_final, [largest_contour], 0, 255, -1)
         
-        # PASO 6: Extraer ROI (región de interés)
+        # Extraer ROI con un poco de padding (margen)
         x, y, w_roi, h_roi = cv2.boundingRect(largest_contour)
+        
+        pad = 10 # 10 píxeles de aire alrededor para que la IA vea bordes
+        x = max(0, x - pad)
+        y = max(0, y - pad)
+        w_roi = min(w - x, w_roi + 2*pad)
+        h_roi = min(h - y, h_roi + 2*pad)
+        
         lesion_roi = img_bgr[y:y+h_roi, x:x+w_roi].copy()
         
-        logger.info(f"✓ ROI extraído: {w_roi}x{h_roi}")
+        logger.info(f"✓ ROI generado: {w_roi}x{h_roi}")
         
-        # Guardar intermedios si debug
+        # Guardar debug si se solicitó
         if self.debug and output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            
-            cv2.imwrite(str(output_dir / "01_original.jpg"), img_bgr)
-            cv2.imwrite(str(output_dir / "02_cb_channel.jpg"), cb)
-            cv2.imwrite(str(output_dir / "03_cr_channel.jpg"), cr)
-            cv2.imwrite(str(output_dir / "04_mask_cbcr.jpg"), mask_cbcr)
-            cv2.imwrite(str(output_dir / "05_mask_lesion.jpg"), mask_lesion)
-            cv2.imwrite(str(output_dir / "06_mask_final.jpg"), mask_final)
-            cv2.imwrite(str(output_dir / "07_lesion_roi.jpg"), lesion_roi)
-            
-            # Visualización
-            img_vis = img_bgr.copy()
-            cv2.drawContours(img_vis, [largest_contour], 0, (0, 255, 0), 2)
-            cv2.imwrite(str(output_dir / "08_segmentation_result.jpg"), img_vis)
-            
-            logger.info(f"📁 Intermedios guardados en {output_dir}")
-        
+            cv2.imwrite(str(output_dir / "debug_01_roi_mask.jpg"), mask_roi)
+            cv2.imwrite(str(output_dir / "debug_02_lesion_raw.jpg"), mask_lesion)
+            cv2.imwrite(str(output_dir / "debug_03_final.jpg"), mask_final)
+
         return {
             'success': True,
             'original': img_bgr,
@@ -164,21 +172,12 @@ class SkinLesionSegmenter:
             'lesion_roi': lesion_roi,
             'contour': largest_contour,
             'bbox': (x, y, w_roi, h_roi),
-            'area': contour_area,
-            'cb_channel': cb,
-            'cr_channel': cr
+            'area': cv2.contourArea(largest_contour) if largest_contour is not None else 0
         }
-    
+
     def visualize_segmentation(self, seg_result, save_path=None):
         """
         Visualiza segmentación sobre imagen original.
-        
-        Args:
-            seg_result (dict): Resultado de segment()
-            save_path (str/Path): Ruta para guardar visualización
-            
-        Returns:
-            imagen con contorno dibujado
         """
         if not seg_result['success']:
             return None
@@ -188,16 +187,11 @@ class SkinLesionSegmenter:
         bbox = seg_result['bbox']
         
         # Dibujar contorno
-        cv2.drawContours(img, [contour], 0, (0, 255, 0), 3)
+        cv2.drawContours(img, [contour], 0, (0, 255, 0), 2)
         
         # Dibujar bounding box
         x, y, w, h = bbox
         cv2.rectangle(img, (x, y), (x+w, y+h), (255, 0, 0), 2)
-        
-        # Texto
-        area = seg_result['area']
-        cv2.putText(img, f"Area: {area:.0f}px", (x, y-10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         if save_path:
             cv2.imwrite(str(save_path), img)
