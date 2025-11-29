@@ -1,5 +1,10 @@
 """
-Pipeline Completo: Segmentación + Clasificación
+Pipeline Completo: Segmentación + Clasificación (Soporte TFLite + Keras)
+
+Uso: 
+    python test_inference.py --image "RUTA DE TU IMAGEN" --model "models/tflite/skin_lesion_classifier_float16.tflite"
+
+    No olvides cambiar "RUTA DE TU IMAGEN" por alguna de las rutas de imagenes de la carpeta de data
 """
 
 import cv2
@@ -7,6 +12,7 @@ import numpy as np
 import tensorflow as tf
 from pathlib import Path
 import logging
+import time
 
 from .segmentation import SkinLesionSegmenter
 
@@ -17,188 +23,158 @@ class SkinLesionInference:
     """Pipeline completo de segmentación y clasificación."""
     
     def __init__(self, model_path, segmenter_debug=False):
-        """
-        Inicializa pipeline.
-        
-        Args:
-            model_path (str/Path): Ruta al modelo H5 entrenado
-            segmenter_debug (bool): Debug de segmentación
-        """
         self.model_path = Path(model_path)
-        self.model = None
         self.segmenter = SkinLesionSegmenter(debug=segmenter_debug)
         self.class_names = ['Melanoma', 'Lunar Benigno', 'Otro']
+        self.model_type = 'keras' # por defecto
+        self.interpreter = None
+        self.input_details = None
+        self.output_details = None
+        self.model = None
         
         self._load_model()
     
     def _load_model(self):
-        """Carga modelo entrenado."""
+        """Carga modelo (detecta si es .h5 o .tflite)."""
         if not self.model_path.exists():
-            raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}\nVerifica que extrajiste models.zip")
+            raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
         
-        try:
-            self.model = tf.keras.models.load_model(str(self.model_path))
-            logger.info(f"✓ Modelo cargado: {self.model_path}")
-        except Exception as e:
-            raise RuntimeError(f"Error cargando modelo: {e}")
+        # Detectar tipo de modelo
+        if self.model_path.suffix == '.tflite':
+            self.model_type = 'tflite'
+            logger.info(f"🔄 Cargando modelo TFLite: {self.model_path.name}")
+            try:
+                self.interpreter = tf.lite.Interpreter(model_path=str(self.model_path))
+                self.interpreter.allocate_tensors()
+                self.input_details = self.interpreter.get_input_details()
+                self.output_details = self.interpreter.get_output_details()
+                logger.info("✓ Modelo TFLite cargado correctamente")
+            except Exception as e:
+                raise RuntimeError(f"Error cargando TFLite: {e}")
+        else:
+            self.model_type = 'keras'
+            logger.info(f"🔄 Cargando modelo Keras: {self.model_path.name}")
+            try:
+                self.model = tf.keras.models.load_model(str(self.model_path))
+                logger.info("✓ Modelo Keras cargado")
+            except Exception as e:
+                raise RuntimeError(f"Error cargando modelo Keras: {e}")
     
     def process_image(self, image_path, output_dir=None):
-        """
-        Procesa imagen completa: segmentación + clasificación.
-        
-        Args:
-            image_path (str/Path): Ruta a imagen
-            output_dir (str/Path): Para guardar intermedios
-            
-        Returns:
-            dict: Resultados
-        """
+        """Procesa imagen completa: segmentación + clasificación."""
         image_path = Path(image_path)
         
         if not image_path.exists():
-            return {'success': False, 'error': f'Imagen no encontrada: {image_path}'}
+            return {'success': False, 'error': f'Imagen no encontrada'}
         
         logger.info(f"\n{'='*60}")
         logger.info(f"Procesando: {image_path.name}")
-        logger.info(f"{'='*60}")
         
         # PASO 1: Segmentación
-        logger.info("\n[1/3] Segmentación YCbCr...")
-        try:
-            seg_result = self.segmenter.segment(image_path, output_dir)
-        except Exception as e:
-            logger.error(f"Error en segmentación: {e}")
-            return {'success': False, 'error': f'Segmentation failed: {e}'}
+        logger.info("[1/3] Segmentación YCbCr...")
+        seg_result = self.segmenter.segment(image_path, output_dir)
         
         if not seg_result['success']:
             logger.error("❌ Segmentación fallida")
             return {'success': False, 'error': 'Segmentation failed'}
         
-        logger.info("✓ Segmentación exitosa")
-        
-        # PASO 2: Preparar imagen para clasificación
-        logger.info("\n[2/3] Preparando imagen para clasificación...")
+        # PASO 2: Preparación para el modelo
+        logger.info("[2/3] Preparando imagen (Color + Resize)...")
         roi = seg_result['lesion_roi']
         
-        # Redimensionar a 224x224
-        roi_resized = cv2.resize(roi, (224, 224))
+        # CRÍTICO: Convertir BGR (OpenCV) a RGB (Entrenamiento)
+        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
         
-        # Normalizar a [0, 1]
-        roi_normalized = roi_resized.astype('float32') / 255.0
+        # Resize a 224x224
+        roi_resized = cv2.resize(roi_rgb, (224, 224))
         
-        # Agregar batch dimension
-        roi_batch = np.expand_dims(roi_normalized, axis=0)
+        # Convertir a float32 (0-255)
+        # NO dividir entre 255 si el modelo tiene capa de Rescaling interna
+        input_data = roi_resized.astype(np.float32)
+        input_data = np.expand_dims(input_data, axis=0)
         
-        logger.info("✓ Imagen preparada: 224x224")
+        # PASO 3: Inferencia
+        logger.info(f"[3/3] Clasificando con motor {self.model_type.upper()}...")
+        start_time = time.time()
         
-        # PASO 3: Clasificación
-        logger.info("\n[3/3] Clasificando...")
         try:
-            predictions = self.model.predict(roi_batch, verbose=0)
+            if self.model_type == 'tflite':
+                # Inferencia TFLite
+                self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
+                self.interpreter.invoke()
+                predictions = self.interpreter.get_tensor(self.output_details[0]['index'])[0]
+            else:
+                # Inferencia Keras (.h5)
+                predictions = self.model.predict(input_data, verbose=0)[0]
+                
         except Exception as e:
-            logger.error(f"Error en clasificación: {e}")
-            return {'success': False, 'error': f'Classification failed: {e}'}
-        
-        class_idx = np.argmax(predictions[0])
-        confidence = predictions[0][class_idx]
+            logger.error(f"Error en inferencia: {e}")
+            return {'success': False, 'error': str(e)}
+            
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"⏱️ Tiempo inferencia: {elapsed:.1f}ms")
+
+        # Procesar resultados
+        class_idx = np.argmax(predictions)
+        confidence = predictions[class_idx]
         class_name = self.class_names[class_idx]
         
-        logger.info(f"✓ Clasificación: {class_name} ({confidence*100:.1f}%)")
+        # Log de resultados
+        logger.info(f"\n📊 RESULTADOS:")
+        for i, name in enumerate(self.class_names):
+            prob = predictions[i] * 100
+            bar = "█" * int(predictions[i] * 20)
+            logger.info(f"   {name:<15}: {prob:5.1f}% {bar}")
         
-        # Mostrar todas las predicciones
-        logger.info("\nDetalle de predicciones:")
-        for i, (name, pred) in enumerate(zip(self.class_names, predictions[0])):
-            bar = '█' * int(pred * 30)
-            logger.info(f"  {name:20} {pred*100:5.1f}% {bar}")
-        
-        # PASO 4: Crear visualización completa
-        logger.info("\n[4/4] Creando visualización...")
+        # PASO 4: Visualización
         visualization = self._create_visualization(seg_result, class_name, confidence)
         
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            
             vis_path = output_dir / f"{image_path.stem}_result.jpg"
             cv2.imwrite(str(vis_path), visualization)
-            logger.info(f"✓ Visualización guardada: {vis_path}")
-        
-        logger.info(f"\n{'='*60}")
-        logger.info(f"✅ RESULTADO: {class_name} ({confidence*100:.1f}%)")
-        logger.info(f"{'='*60}\n")
+            logger.info(f"\n💾 Visualización guardada: {vis_path}")
         
         return {
             'success': True,
-            'image_path': image_path,
             'class': class_name,
             'confidence': float(confidence),
-            'all_predictions': {name: float(pred) 
-                              for name, pred in zip(self.class_names, predictions[0])},
-            'segmentation_mask': seg_result['segmentation_mask'],
-            'visualization': visualization,
-            'roi': roi,
-            'roi_resized': roi_resized
+            'all_predictions': {name: float(pred) for name, pred in zip(self.class_names, predictions)},
+            'visualization': visualization
         }
     
     def _create_visualization(self, seg_result, class_name, confidence):
-        """Crea imagen de visualización completa."""
+        """Crea imagen de visualización."""
         original = seg_result['original'].copy()
         h, w = original.shape[:2]
         
-        # Canvas grande
-        canvas = np.ones((h, w*2 + 20), dtype=np.uint8) * 255
+        # Canvas: Izquierda (Original+Contorno), Derecha (Máscara)
+        canvas = np.ones((h, w*2 + 20, 3), dtype=np.uint8) * 255
         
-        # Imagen original + contorno
-        img_seg = original.copy()
-        cv2.drawContours(img_seg, [seg_result['contour']], 0, (0, 255, 0), 3)
-        canvas[:h, :w] = cv2.cvtColor(img_seg, cv2.COLOR_BGR2GRAY)
+        # 1. Lado Izquierdo: Original + Contorno AZUL
+        img_contour = original.copy()
+        # Usamos AZUL (255, 0, 0) para el contorno
+        cv2.drawContours(img_contour, [seg_result['contour']], -1, (255, 0, 0), 3)
+        # Dibujar bounding box (opcional, verde finito)
+        x, y, wr, hr = seg_result['bbox']
+        cv2.rectangle(img_contour, (x, y), (x+wr, y+hr), (0, 255, 0), 1)
         
-        # Máscara de segmentación
-        canvas[:h, w+20:] = seg_result['segmentation_mask']
+        canvas[:h, :w] = img_contour
         
-        # Texto
+        # 2. Lado Derecho: Máscara binaria
+        mask_vis = cv2.cvtColor(seg_result['segmentation_mask'], cv2.COLOR_GRAY2BGR)
+        canvas[:h, w+20:] = mask_vis
+        
+        # 3. Textos informativos
         font = cv2.FONT_HERSHEY_SIMPLEX
-        cv2.putText(canvas, "Segmentacion YCbCr", (10, 30),
-                   font, 1, (0, 0, 0), 2)
-        cv2.putText(canvas, "Mascara", (w + 30, 30),
-                   font, 1, (0, 0, 0), 2)
-        cv2.putText(canvas, f"Resultado: {class_name}", (10, h-20),
-                   font, 1.2, (0, 0, 0), 2)
-        cv2.putText(canvas, f"Confianza: {confidence*100:.1f}%", (10, h+30),
-                   font, 0.9, (0, 0, 0), 2)
         
-        # Convertir a BGR para cv2.imwrite
-        return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
-    
-    def process_directory(self, image_dir, output_dir=None):
-        """Procesa todas las imágenes en directorio."""
-        image_dir = Path(image_dir)
-        results = []
+        # Títulos
+        cv2.putText(canvas, "Segmentacion", (10, 30), font, 0.8, (255, 0, 0), 2)
+        cv2.putText(canvas, "Mascara IA", (w + 30, 30), font, 0.8, (0, 0, 0), 2)
         
-        for image_file in image_dir.glob('*.jpg'):
-            try:
-                result = self.process_image(image_file, output_dir)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Error procesando {image_file}: {e}")
+        # Resultado (Fondo blanco, letras negras)
+        res_text = f"{class_name} ({confidence*100:.1f}%)"
+        cv2.putText(canvas, res_text, (10, h-20), font, 1.0, (0, 0, 255), 2)
         
-        return results
-
-# Script de uso
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--image", required=True, help="Ruta a imagen")
-    parser.add_argument("--model", default="models/skin_lesion_classifier.h5")
-    parser.add_argument("--output_dir", default=None)
-    args = parser.parse_args()
-    
-    # Crear pipeline
-    inference = SkinLesionInference(args.model, segmenter_debug=True)
-    
-    # Procesar imagen
-    result = inference.process_image(args.image, args.output_dir)
-    
-    if result['success']:
-        print(f"\n✅ {result['class']}: {result['confidence']*100:.1f}%")
+        return canvas
