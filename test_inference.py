@@ -2,7 +2,8 @@
 Script para probar el modelo con una imagen
 
 Uso:
-    python test_inference.py --image test_lesion.jpg
+    python test_inference.py --image RUTA_ARCHIVO_JPG --model "models/tflite/skin_lesion_classifier_float16.tflite" 
+    No olvides cambiar RUTA_ARCHIVO_JPG por alguna de las rutas de imagenes de la carpeta de data
 """
 
 import argparse
