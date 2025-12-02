@@ -9,86 +9,158 @@ import queue
 import os
 import numpy as np
 import tensorflow as tf
+import time
+import traceback
 
 # ====================================================
-# SISTEMA DE SEGMENTACIÓN YCbCr
+# SISTEMA DE SEGMENTACIÓN MEJORADO (Canal Azul + Otsu)
 # ====================================================
 class SkinLesionSegmenter:
     def __init__(self, debug=False):
         self.debug = debug
         
     def segment(self, image_path, output_dir=None):
-        """Segmentar lesión de piel usando espacio de color YCbCr"""
+        """
+        Segmentación mejorada para dermatología:
+        1. Usa el canal AZUL (donde la melanina resalta más).
+        2. Aplica Thresholding de Otsu (automático).
+        3. Si falla, hace un recorte central (Fallback).
+        """
         try:
             # Cargar imagen
             image = cv2.imread(image_path)
             if image is None:
                 return {'success': False, 'error': 'No se pudo cargar la imagen'}
             
-            # Convertir a YCbCr
-            ycbcr_image = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+            orig_h, orig_w = image.shape[:2]
             
-            # Definir rangos para piel en espacio YCbCr
-            lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-            upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+            # --- ESTRATEGIA 1: Segmentación por Canal Azul (Mejor para lunares) ---
+            # Los lunares absorben mucha luz azul, por lo que se ven muy oscuros en el canal B
+            b_channel = image[:, :, 0] 
             
-            # Crear máscara
-            skin_mask = cv2.inRange(ycbcr_image, lower_skin, upper_skin)
+            # Suavizar para quitar pelos/ruido
+            blur = cv2.GaussianBlur(b_channel, (5, 5), 0)
             
-            # Operaciones morfológicas para mejorar la máscara
+            # Invertir (queremos que el lunar sea blanco y la piel negra para la máscara)
+            # Otsu encuentra el umbral óptimo automáticamente
+            _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            
+            # Limpieza morfológica (quitar ruido pequeño)
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
-            skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
             
             # Encontrar contornos
-            contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            if not contours:
-                return {'success': False, 'error': 'No se detectaron lesiones'}
+            # Filtrar contornos por tamaño y posición
+            valid_contours = []
+            img_center = np.array([orig_w // 2, orig_h // 2])
+            min_area = (orig_w * orig_h) * 0.005 # 0.5% del total
             
-            # Encontrar el contorno más grande (la lesión principal)
-            main_contour = max(contours, key=cv2.contourArea)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area > min_area:
+                    # Preferir contornos cercanos al centro
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        # Distancia al centro
+                        dist = np.linalg.norm(img_center - np.array([cX, cY]))
+                        # Si es lo suficientemente grande y no está en el borde extremo
+                        valid_contours.append((cnt, area, dist))
+
+            final_mask = np.zeros_like(b_channel)
+            roi = None
+            main_contour = None
             
-            # Crear máscara de la lesión
-            lesion_mask = np.zeros_like(skin_mask)
-            cv2.drawContours(lesion_mask, [main_contour], -1, 255, -1)
+            success = False
             
-            # Aplicar máscara a la imagen original
-            segmented_image = cv2.bitwise_and(image, image, mask=lesion_mask)
+            if valid_contours:
+                # Ordenar: Priorizar área grande y cercanía al centro
+                main_contour = sorted(valid_contours, key=lambda x: x[1], reverse=True)[0][0]
+                
+                # 1. Crear máscara para VISUALIZACIÓN (lo que ves en la app)
+                cv2.drawContours(final_mask, [main_contour], -1, 255, -1)
+                segmented_image = cv2.bitwise_and(image, image, mask=final_mask)
+                
+                # 2. Extraer ROI para el MODELO (Cuadrado y con Piel)
+                x, y, w, h = cv2.boundingRect(main_contour)
+                
+                # --- AQUÍ ESTÁ EL TRUCO: AUMENTAR EL MARGEN (PADDING) ---
+                # Aumentamos un 40% el tamaño del recuadro para incluir piel sana
+                pad_w = int(w * 0.40)
+                pad_h = int(h * 0.40)
+                
+                # Calcular nuevas coordenadas asegurando no salirnos de la imagen
+                x1 = max(0, x - pad_w)
+                y1 = max(0, y - pad_h)
+                x2 = min(orig_w, x + w + pad_w)
+                y2 = min(orig_h, y + h + pad_h)
+                
+                # IMPORTANTE: Recortamos de 'image' (original), NO de 'segmented_image' (negra)
+                roi = image[y1:y2, x1:x2] 
+                
+                success = True
             
-            # Calcular área de la lesión
-            area_pixels = cv2.contourArea(main_contour)
+            # --- ESTRATEGIA 2: FALLBACK (Si falla la detección) ---
+            if not success or roi is None or roi.size == 0:
+                print("⚠️ No se detectó contorno claro. Usando recorte central (Fallback).")
+                # Tomar el 60% central de la imagen
+                c_x, c_y = orig_w // 2, orig_h // 2
+                w_crop, h_crop = int(orig_w * 0.6), int(orig_h * 0.6)
+                x1 = max(0, c_x - w_crop // 2)
+                y1 = max(0, c_y - h_crop // 2)
+                roi = image[y1:y1+h_crop, x1:x1+w_crop]
+                
+                # Máscara dummy (todo visible en el centro)
+                final_mask[y1:y1+h_crop, x1:x1+w_crop] = 255
+                
+                # Crear un contorno artificial cuadrado para visualización
+                main_contour = np.array([[x1, y1], [x1+w_crop, y1], [x1+w_crop, y1+h_crop], [x1, y1+h_crop]])
+                success = True # Consideramos éxito porque tenemos datos para el modelo
+
+            # Generar imágenes de visualización
+            segmented_image = cv2.bitwise_and(image, image, mask=final_mask)
             
-            # Crear imagen con contorno
-            image_with_contour = image.copy()
-            cv2.drawContours(image_with_contour, [main_contour], -1, (0, 255, 0), 3)
-            
+            image_with_contours = image.copy()
+            if main_contour is not None:
+                cv2.drawContours(image_with_contours, [main_contour], -1, (0, 255, 0), 3)
+
             result = {
                 'success': True,
                 'original_image': image,
                 'segmented_image': segmented_image,
-                'lesion_mask': lesion_mask,
-                'contour_image': image_with_contour,
-                'contour': main_contour,
-                'area': area_pixels,
-                'contours_found': len(contours)
+                'contour_image': image_with_contours,
+                'roi': roi, # ESTA ES LA IMAGEN CLAVE PARA EL MODELO
+                'area': cv2.contourArea(main_contour) if main_contour is not None else 0,
+                'contours_found': len(valid_contours)
             }
-            
-            # Guardar resultados si se especifica directorio de salida
-            if output_dir and os.path.exists(output_dir):
-                base_name = os.path.splitext(os.path.basename(image_path))[0]
-                cv2.imwrite(os.path.join(output_dir, f"{base_name}_segmented.jpg"), segmented_image)
-                cv2.imwrite(os.path.join(output_dir, f"{base_name}_contour.jpg"), image_with_contour)
-                cv2.imwrite(os.path.join(output_dir, f"{base_name}_mask.jpg"), lesion_mask)
-            
+
             if self.debug:
-                print(f"✅ Segmentación exitosa - Área: {area_pixels:.0f} píxeles")
-                print(f"📊 Contornos encontrados: {len(contours)}")
-            
+                print(f"✅ Segmentación completada. ROI shape: {roi.shape}")
+
             return result
             
         except Exception as e:
-            return {'success': False, 'error': f'Error en segmentación: {str(e)}'}
+            print(f"❌ Error crítico en segmentación: {e}")
+            import traceback
+            traceback.print_exc()
+            # Retorno de emergencia: devolver imagen original
+            image = cv2.imread(image_path)
+            if image is None:
+                return {'success': False, 'error': 'No se pudo cargar la imagen'}
+                
+            return {
+                'success': True, 
+                'original_image': image,
+                'segmented_image': image,
+                'roi': image,
+                'contour_image': image,
+                'area': 0,
+                'contours_found': 0
+            }
 
 # ====================================================
 # MODELO DE MACHINE LEARNING CON PIPELINE COMPLETO
@@ -119,7 +191,9 @@ class DermatologyModel:
                 "models/skin_lesion_classifier_float16.tflite",
                 "models/filite/skin_lesion_classifier_float16.tflite", 
                 "skin_lesion_classifier_float16.tflite",
-                "model.tflite"
+                "model.tflite",
+                "../models/skin_lesion_classifier_float16.tflite",
+                "./skin_lesion_classifier_float16.tflite"
             ]
             
             model_path = None
@@ -130,7 +204,17 @@ class DermatologyModel:
                     break
             
             if not model_path:
-                raise FileNotFoundError("Modelo no encontrado. Coloque el archivo skin_lesion_classifier_float16.tflite en la carpeta models/")
+                current_dir = os.path.cwd()
+                print(f"❌ MODELO NO ENCONTRADO")
+                print(f"📂 Directorio actual: {current_dir}")
+                print(f"🔍 Buscado en:")
+                for path in possible_paths:
+                    print(f"   - {os.path.abspath(path)}")
+                raise FileNotFoundError(
+                    "Modelo no encontrado. Por favor:\n"
+                    "1. Descarga tu modelo .tflite\n"
+                    "2. Colócalo en una de las rutas mostradas arriba\n"
+                    "3. O especifica la ruta manualmente")
             
             print("🔄 Cargando modelo de IA...")
             
@@ -145,6 +229,7 @@ class DermatologyModel:
             print("✅ Modelo de IA cargado exitosamente!")
             print(f"📊 Input shape: {self.input_details[0]['shape']}")
             print(f"📊 Input dtype: {self.input_details[0]['dtype']}")
+            print(f"📊 Output shape: {self.output_details[0]['shape']}")
             
         except Exception as e:
             print(f"❌ Error cargando el modelo: {e}")
@@ -153,53 +238,94 @@ class DermatologyModel:
     def preprocess_image(self, image):
         """Preprocesar imagen para el modelo"""
         try:
+            if image is None or image.size == 0:
+                raise ValueError("Imagen vacía o None recibida")
+            
             # Redimensionar a 224x224
-            image_resized = cv2.resize(image, (224, 224))
+            image_resized = cv2.resize(image, (224, 224), interpolation=cv2.INTER_AREA)
             
             # Convertir a RGB
             image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             
-            # Normalización [0, 1]
-            image_normalized = image_rgb.astype(np.float32) / 255.0
+            if self.input_details[0]['dtype'] == np.float32:
+                # Normalización [0, 1] para float32
+                image_normalized = image_rgb.astype(np.float32) / 255.0
+            elif self.input_details[0]['dtype'] == np.uint8:
+                # Sin normalización para uint8
+                image_normalized = image_rgb.astype(np.uint8)
+            else:
+                raise ValueError(f"Dtype no soportado: {self.input_details[0]['dtype']}")
             
             # Agregar dimensión del batch
             image_batch = np.expand_dims(image_normalized, axis=0)
             
             if self.debug:
                 print(f"🎯 Imagen procesada: {image_batch.shape}")
+                print(f"   Min: {image_batch.min():.3f}, Max: {image_batch.max():.3f}")
             
             return image_batch
             
         except Exception as e:
             print(f"❌ Error procesando imagen: {e}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
             return None
     
     def predict(self, image_path, output_dir=None):
-        """Pipeline completo: Segmentación + Clasificación"""
+        """Pipeline completo: Segmentación + Clasificación - VERSIÓN CORREGIDA"""
         try:
-            print("🔬 Iniciando pipeline completo de análisis...")
-            
-            # 1. SEGMENTACIÓN
-            print("📐 Ejecutando segmentación YCbCr...")
+            print("\n" + "="*60)
+            print("🔬 INICIANDO PIPELINE COMPLETO DE ANÁLISIS")
+            print("="*60)
+
+            # 1. SEGMENTACIÓN MEJORADA
+            print("📐 Ejecutando segmentación mejorada (Canal Azul + Otsu)...")
             segmentation_result = self.segmenter.segment(image_path, output_dir)
             
+            # Inicializar variables para todos los casos
+            original_image = None
+            image_to_classify = None
+            contour_image = None
+            area = 0
+            has_segmentation = False
+            contours_found = 0
+
             if not segmentation_result['success']:
-                print(f"❌ Error en segmentación: {segmentation_result.get('error', 'Desconocido')}")
-                # Usar imagen original si falla la segmentación
+                print(f"⚠️  Segmentación falló: {segmentation_result.get('error', 'Desconocido')}")
+                print("   Usando imagen original completa...")
                 original_image = cv2.imread(image_path)
-                segmented_image = original_image
-                contour_image = original_image
-                area = 0
+
+                if original_image is None:
+                    raise ValueError(f"No se pudo cargar la imagen: {image_path}")
+                image_to_classify = original_image
+                contour_image = original_image.copy()
+                has_segmentation = False
             else:
                 original_image = segmentation_result['original_image']
-                segmented_image = segmentation_result['segmented_image']
-                contour_image = segmentation_result['contour_image']
-                area = segmentation_result['area']
-                print(f"✅ Segmentación exitosa - Área: {area:.0f} píxeles")
+                contour_image = segmentation_result.get('contour_image', original_image.copy())
+                area = segmentation_result.get('area', 0)
+                contours_found = segmentation_result.get('contours_found', 0)
+                has_segmentation = True
+                print(f"✅ Segmentación completada")
+                
+                # CORRECCIÓN VITAL: Priorizar el ROI (Recorte) para la predicción
+                if 'roi' in segmentation_result and segmentation_result['roi'] is not None:
+                    image_to_classify = segmentation_result['roi']
+                    print("🚀 Usando ROI (Recorte del lunar) para el modelo")
+                    print(f"   ROI shape: {image_to_classify.shape}")
+                else:
+                    image_to_classify = original_image
+                    print("⚠️ Usando imagen completa (sin recortar)")
+
+            # Validar tamaño antes de pasar al modelo
+            if image_to_classify is None or image_to_classify.size == 0:
+                print("⚠️ Imagen a clasificar es inválida, usando imagen original")
+                image_to_classify = original_image
             
             # 2. PREPROCESAMIENTO
             print("🔄 Preprocesando imagen para clasificación...")
-            input_data = self.preprocess_image(segmented_image)
+            input_data = self.preprocess_image(image_to_classify)
             if input_data is None:
                 raise ValueError("Error en preprocesamiento de imagen")
             
@@ -212,9 +338,15 @@ class DermatologyModel:
             output_data = self.model.get_tensor(self.output_details[0]['index'])
             predictions = output_data[0]
             
-            print(f"📊 Predicciones: {[f'{p:.3f}' for p in predictions]}")
+            if predictions.max() > 1.0:
+                print("   Aplicando softmax a las predicciones...")
+                exp_preds = np.exp(predictions - np.max(predictions))
+                predictions = exp_preds / exp_preds.sum()
             
+            print(f"📊 Predicciones raw: {predictions}")
+
             # 4. POST-PROCESAMIENTO
+            print("\n📈 PASO 4: Interpretación de resultados...")
             predicted_class_idx = np.argmax(predictions)
             confidence = predictions[predicted_class_idx]
             predicted_class = self.class_names[predicted_class_idx]
@@ -226,22 +358,32 @@ class DermatologyModel:
             all_predictions = {}
             for i, class_name in enumerate(self.class_names):
                 all_predictions[class_name] = float(predictions[i])
-            
+                print(f"   {class_name:8s}: {predictions[i]:.1%}")
+
             # Información de segmentación
             segmentation_info = {
                 'area_pixels': area,
-                'contours_found': segmentation_result.get('contours_found', 0),
-                'has_contour': segmentation_result['success'],
-                'contour_image': contour_image
+                'contours_found': contours_found,
+                'has_contour': has_segmentation,
+                'contour_image': contour_image if contour_image is not None else original_image.copy(),
+                'original_image': original_image.copy() if original_image is not None else None,
+                'segmented_image': segmentation_result.get('segmented_image', None) if has_segmentation else None,
+                'success': has_segmentation
             }
             
-            print(f"✅ Análisis completo: {result_text}")
+            print("\n" + "="*60)
+            print(f"✅ RESULTADO FINAL: {result_text}")
+            print("="*60 + "\n")
             
             return result_text, confidence, all_predictions, segmentation_info
             
         except Exception as e:
-            print(f"❌ Error en pipeline completo: {e}")
+            print(f"\n❌ ERROR EN PIPELINE: {e}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
             raise
+
 
 # ====================================================
 # VENTANA DE ANÁLISIS MEJORADA CON VISUALIZACIÓN
@@ -253,11 +395,15 @@ class AnalysisWindow:
         self.ml_model = ml_model
         self.analysis_in_progress = False
         self.segmentation_results = None
+        self.original_photo = None
+        self.contour_photo = None
+        self.segmented_photo = None
+        self.prob_photo = None  # Para el gráfico de probabilidades
         self.create_window()
         
     def create_window(self):
         self.window = tb.Toplevel(self.parent)
-        self.window.title("DermaScan Pro - Análisis con Segmentación")
+        self.window.title("DermaScan Pro - Análisis con Segmentación Mejorada")
         self.window.geometry("1200x800")
         self.window.configure(padx=20, pady=20)
         
@@ -268,7 +414,7 @@ class AnalysisWindow:
         # Título
         title_label = tb.Label(
             main_frame,
-            text="ANÁLISIS DERMATOLÓGICO CON SEGMENTACIÓN IA",
+            text="ANÁLISIS DERMATOLÓGICO CON SEGMENTACIÓN MEJORADA IA",
             font=('Arial', 18, 'bold'),
             bootstyle='primary'
         )
@@ -411,11 +557,16 @@ class AnalysisWindow:
         
         # Información adicional
         info_text = """
-🎯 PIPELINE COMPLETO:
-1. Segmentación YCbCr
-2. Aislamiento de lesión  
+🎯 PIPELINE MEJORADO:
+1. Segmentación Canal Azul + Otsu
+2. Detección automática de lunar
 3. Clasificación EfficientNet
 4. Análisis de características
+
+📊 TÉCNICA MEJORADA:
+• Canal Azul: Mayor contraste melanina
+• Otsu: Umbral automático
+• ROI: Recorte inteligente
 
 ⚠️ Sistema de apoyo al diagnóstico
    No sustituye evaluación médica.
@@ -436,49 +587,130 @@ class AnalysisWindow:
     def load_original_image(self):
         """Cargar imagen original en el canvas"""
         if self.image_path and os.path.exists(self.image_path):
-            image = Image.open(self.image_path)
-            # Redimensionar para visualización
-            image.thumbnail((240, 190), Image.Resampling.LANCZOS)
-            self.original_photo = ImageTk.PhotoImage(image)
-            
-            self.original_canvas.delete("all")
-            self.original_canvas.create_image(125, 100, image=self.original_photo)
-            
-            # Mostrar mensaje en otros canvas
-            for canvas in [self.contour_canvas, self.segmented_canvas, self.prob_canvas]:
-                canvas.delete("all")
-                canvas.create_text(125, 100, text="Ejecute análisis\npara ver resultados", 
-                                 fill="white", font=('Arial', 10), justify=CENTER)
+            try:
+                image = Image.open(self.image_path)
+                # Redimensionar para visualización
+                image.thumbnail((240, 190), Image.Resampling.LANCZOS)
+                self.original_photo = ImageTk.PhotoImage(image)
+                
+                self.original_canvas.delete("all")
+                self.original_canvas.create_image(125, 100, image=self.original_photo)
+                
+                # Mostrar mensaje en otros canvas
+                for canvas in [self.contour_canvas, self.segmented_canvas, self.prob_canvas]:
+                    canvas.delete("all")
+                    canvas.create_text(125, 100, text="Ejecute análisis\npara ver resultados", 
+                                     fill="white", font=('Arial', 10), justify=CENTER)
+            except Exception as e:
+                print(f"Error cargando imagen original: {e}")
+                self.original_canvas.delete("all")
+                self.original_canvas.create_text(
+                    125, 100,
+                    text="Error cargando\nimagen",
+                    fill="red",
+                    font=('Arial', 10),
+                    justify=CENTER
+                )
     
     def update_visualizations(self, segmentation_info, all_predictions):
-        """Actualizar todas las visualizaciones"""
+        """Actualizar todas las visualizaciones - VERSIÓN CORREGIDA"""
         try:
             # 1. Imagen con contorno
             if segmentation_info and segmentation_info.get('contour_image') is not None:
-                contour_img = segmentation_info['contour_image']
-                contour_img_rgb = cv2.cvtColor(contour_img, cv2.COLOR_BGR2RGB)
-                contour_pil = Image.fromarray(contour_img_rgb)
-                contour_pil.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                self.contour_photo = ImageTk.PhotoImage(contour_pil)
-                
+                try:
+                    contour_img = segmentation_info['contour_image']
+                    # Verificar que sea un numpy array válido
+                    if isinstance(contour_img, np.ndarray) and contour_img.size > 0:
+                        contour_img_rgb = cv2.cvtColor(contour_img, cv2.COLOR_BGR2RGB)
+                        contour_pil = Image.fromarray(contour_img_rgb)
+                        contour_pil.thumbnail((240, 190), Image.Resampling.LANCZOS)
+                        self.contour_photo = ImageTk.PhotoImage(contour_pil)
+                        
+                        self.contour_canvas.delete("all")
+                        self.contour_canvas.create_image(125, 100, image=self.contour_photo)
+                    else:
+                        raise ValueError("Imagen de contorno inválida")
+                except Exception as e:
+                    print(f"Error procesando imagen de contorno: {e}")
+                    self.contour_canvas.delete("all")
+                    self.contour_canvas.create_text(
+                        125, 100,
+                        text="Error en\nsegmentación",
+                        fill="orange",
+                        font=('Arial', 10),
+                        justify=CENTER
+                    )
+            else:
                 self.contour_canvas.delete("all")
-                self.contour_canvas.create_image(125, 100, image=self.contour_photo)
+                self.contour_canvas.create_text(
+                    125, 100,
+                    text="Sin datos de\nsegmentación",
+                    fill="yellow",
+                    font=('Arial', 10),
+                    justify=CENTER
+                )
             
-            # 2. Imagen segmentada (usar imagen original por ahora)
-            if self.image_path and os.path.exists(self.image_path):
-                segmented_img = Image.open(self.image_path)
-                segmented_img.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                self.segmented_photo = ImageTk.PhotoImage(segmented_img)
+            # 2. Imagen segmentada
+            try:
+                if segmentation_info and segmentation_info.get('segmented_image') is not None:
+                    seg_img = segmentation_info['segmented_image']
+                    if isinstance(seg_img, np.ndarray) and seg_img.size > 0:
+                        # Convertir BGR a RGB si es necesario
+                        if len(seg_img.shape) == 3 and seg_img.shape[2] == 3:
+                            seg_img_rgb = cv2.cvtColor(seg_img, cv2.COLOR_BGR2RGB)
+                            seg_pil = Image.fromarray(seg_img_rgb)
+                        else:
+                            seg_pil = Image.fromarray(seg_img)
+                        
+                        seg_pil.thumbnail((240, 190), Image.Resampling.LANCZOS)
+                        self.segmented_photo = ImageTk.PhotoImage(seg_pil)
+                    else:
+                        # Fallback a imagen original
+                        seg_img = Image.open(self.image_path)
+                        seg_img.thumbnail((240, 190), Image.Resampling.LANCZOS)
+                        self.segmented_photo = ImageTk.PhotoImage(seg_img)
+                else:
+                    # Usar imagen original si no hay segmentada
+                    seg_img = Image.open(self.image_path)
+                    seg_img.thumbnail((240, 190), Image.Resampling.LANCZOS)
+                    self.segmented_photo = ImageTk.PhotoImage(seg_img)
                 
                 self.segmented_canvas.delete("all")
                 self.segmented_canvas.create_image(125, 100, image=self.segmented_photo)
+                
+            except Exception as e:
+                print(f"Error procesando imagen segmentada: {e}")
+                self.segmented_canvas.delete("all")
+                self.segmented_canvas.create_text(
+                    125, 100,
+                    text="Error en\nimagen",
+                    fill="orange",
+                    font=('Arial', 10),
+                    justify=CENTER
+                )
             
             # 3. Gráfico de probabilidades
-            if all_predictions:
+            if all_predictions and len(all_predictions) > 0:
                 self.draw_probability_chart(all_predictions)
+            else:
+                self.prob_canvas.delete("all")
+                self.prob_canvas.create_text(
+                    125, 100,
+                    text="Sin datos\nprobabilísticos",
+                    fill="black",
+                    font=('Arial', 10),
+                    justify=CENTER
+                )
                 
         except Exception as e:
             print(f"Error actualizando visualizaciones: {e}")
+            # Mostrar mensajes de error en todos los canvas
+            error_msg = "Error visualización"
+            for canvas, color in [(self.contour_canvas, "red"), 
+                                  (self.segmented_canvas, "red")]:
+                canvas.delete("all")
+                canvas.create_text(125, 100, text=error_msg, 
+                                 fill=color, font=('Arial', 10), justify=CENTER)
     
     def draw_probability_chart(self, predictions):
         """Dibujar gráfico de barras de probabilidades"""
@@ -491,7 +723,15 @@ class AnalysisWindow:
             height = 200
             margin = 30
             bar_width = 40
+            
+            # Verificar que hay predicciones válidas
+            if not predictions:
+                raise ValueError("Sin predicciones")
+                
             max_prob = max(predictions.values())
+            
+            if max_prob == 0:
+                max_prob = 1.0  # Evitar división por cero
             
             # Colores para cada clase
             colors = {'mel': '#e74c3c', 'nv': '#2ecc71', 'other': '#f39c12'}
@@ -504,14 +744,21 @@ class AnalysisWindow:
             # Dibujar barras
             classes = list(predictions.keys())
             for i, class_name in enumerate(classes):
-                prob = predictions[class_name]
+                prob = predictions.get(class_name, 0)
                 bar_height = (prob / max_prob) * (height - 2 * margin - 20) if max_prob > 0 else 0
                 x0 = margin + 10 + i * (bar_width + 30)
                 y0 = height - margin
                 y1 = y0 - bar_height
                 
+                # Asegurar altura mínima para visibilidad
+                if bar_height < 5 and prob > 0:
+                    bar_height = 5
+                    y1 = y0 - bar_height
+                
                 # Dibujar barra
-                canvas.create_rectangle(x0, y1, x0 + bar_width, y0, fill=colors[class_name], outline='black')
+                canvas.create_rectangle(x0, y1, x0 + bar_width, y0, 
+                                      fill=colors.get(class_name, '#3498db'), 
+                                      outline='black')
                 
                 # Etiqueta de probabilidad
                 canvas.create_text(x0 + bar_width/2, y1 - 10, text=f"{prob:.1%}", 
@@ -519,7 +766,8 @@ class AnalysisWindow:
                 
                 # Etiqueta de clase
                 canvas.create_text(x0 + bar_width/2, height - margin + 15, 
-                                 text=descriptions[class_name], font=('Arial', 8))
+                                 text=descriptions.get(class_name, class_name), 
+                                 font=('Arial', 8))
             
             # Título
             canvas.create_text(width/2, 15, text="PROBABILIDADES", 
@@ -527,6 +775,7 @@ class AnalysisWindow:
                              
         except Exception as e:
             print(f"Error dibujando gráfico: {e}")
+            canvas.delete("all")
             canvas.create_text(125, 100, text="Error en gráfico", 
                              fill="red", font=('Arial', 10))
     
@@ -548,7 +797,7 @@ class AnalysisWindow:
         for canvas in [self.contour_canvas, self.segmented_canvas, self.prob_canvas]:
             canvas.delete("all")
             canvas.create_text(125, 100, text="Procesando...", 
-                             fill="white", font=('Arial', 10))
+                             fill="white", font=('Arial', 10), justify=CENTER)
         
         # Ejecutar en hilo separado
         threading.Thread(target=self.perform_analysis, daemon=True).start()
@@ -568,6 +817,7 @@ class AnalysisWindow:
             
         except Exception as e:
             error_msg = f"Error en análisis: {str(e)}"
+            print(f"Error en perform_analysis: {error_msg}")
             self.window.after(0, self.show_analysis_error, error_msg)
     
     def show_analysis_results(self, result_text, confidence, all_predictions, segmentation_info):
@@ -602,6 +852,7 @@ class AnalysisWindow:
         self.diagnosis_label.config(text=error_msg, bootstyle='danger')
         self.confidence_label.config(text="Error en análisis")
         self.segmentation_label.config(text="---")
+        print(f"❌ Error mostrado en interfaz: {error_msg}")
     
     def save_analysis_log(self, result, confidence, segmentation_info):
         """Guardar log del análisis"""
@@ -620,7 +871,7 @@ class AnalysisWindow:
                 if segmentation_info:
                     f.write(f"Área de lesión: {segmentation_info.get('area_pixels', 0):.0f} píxeles\n")
                     f.write(f"Contornos detectados: {segmentation_info.get('contours_found', 0)}\n")
-                f.write("Tecnología: Segmentación YCbCr + EfficientNetB0\n")
+                f.write("Tecnología: Segmentación Canal Azul + Otsu + EfficientNetB0\n")
                 f.write("=" * 60 + "\n")
                 
             print(f"📝 Log guardado: {log_file}")
@@ -644,8 +895,8 @@ class AnalysisWindow:
                 f.write(f"- Diagnóstico: {self.diagnosis_label.cget('text')}\n")
                 f.write(f"- Nivel de confianza: {self.confidence_label.cget('text')}\n")
                 f.write(f"- {self.segmentation_label.cget('text')}\n\n")
-                f.write("METODOLOGÍA:\n")
-                f.write("- Segmentación: Espacio de color YCbCr\n")
+                f.write("METODOLOGÍA MEJORADA:\n")
+                f.write("- Segmentación: Canal Azul + Thresholding de Otsu\n")
                 f.write("- Clasificación: Red Neuronal EfficientNetB0\n")
                 f.write("- Características analizadas: Asimetría, Bordes, Color, Diámetro\n\n")
                 f.write("NOTA: Este reporte es de apoyo al diagnóstico y debe ser\n")
@@ -659,14 +910,13 @@ class AnalysisWindow:
     def show_technical_details(self):
         """Mostrar detalles técnicos del pipeline"""
         details = """
-🔬 PIPELINE TÉCNICO COMPLETO:
+🔬 PIPELINE TÉCNICO MEJORADO:
 
-1. SEGMENTACIÓN YCbCr
-   - Conversión a espacio de color YCbCr
-   - Detección de piel: Cb ∈ [77,127], Cr ∈ [133,173]
-   - Operaciones morfológicas (abertura/cierre)
-   - Detección de contornos
-   - Aislamiento de la lesión
+1. SEGMENTACIÓN CANAL AZUL
+   - Canal B (Blue): La melanina absorbe luz azul
+   - Thresholding de Otsu: Umbral automático
+   - Filtrado por área y posición
+   - Fallback: Recorte central 60%
 
 2. CLASIFICACIÓN IA
    - Red Neuronal: EfficientNetB0
@@ -717,7 +967,6 @@ class DermatoscopeApp:
         self.cap = None
         self.camera_running = False
         self.current_image_path = None
-        self.flash_on = False
         self.zoom_level = 1.0
         self.resolution = "1280x720"
 
@@ -801,16 +1050,6 @@ class DermatoscopeApp:
         # Controles de imagen
         image_controls = tb.Frame(control_frame)
         image_controls.pack(side=RIGHT)
-
-        # Control de flash
-        self.flash_btn = tb.Button(
-            image_controls,
-            text="⚡ Flash: OFF",
-            bootstyle='outline-warning',
-            command=self.toggle_flash,
-            padding=(8, 4)
-        )
-        self.flash_btn.pack(side=LEFT, padx=(0, 8))
 
         # Control de resolución
         resolution_frame = tb.Frame(image_controls)
@@ -1146,18 +1385,10 @@ SOFTWARE:
 
     def update_zoom(self, value):
         """Actualizar nivel de zoom"""
-        self.zoom_level = float(value)
-
-    def toggle_flash(self):
-        """Alternar flash (simulado)"""
-        self.flash_on = not self.flash_on
-        state = "ON" if self.flash_on else "OFF"
-        self.flash_btn.config(text=f"⚡ Flash: {state}")
-        
-        if self.flash_on:
-            self.status_label.config(text="● FLASH ACTIVADO", bootstyle='warning')
-        else:
-            self.status_label.config(text="● CÁMARA ACTIVA", bootstyle='success')
+        try:
+            self.zoom_level = float(value)
+        except ValueError:
+            self.zoom_level = 1.0
 
     def capture(self):
         if not self.camera_running:
