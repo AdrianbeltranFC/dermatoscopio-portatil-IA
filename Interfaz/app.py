@@ -188,7 +188,7 @@ class DermatologyModel:
         try:
             # RUTAS DONDE BUSCAR TU MODELO
             possible_paths = [
-                "models/tflite/skin_lesion_float32_FINAL.tflite"
+                "models/tflite/skin_lesion_float32_FINAL.tflite",
                 "models/skin_lesion_classifier_float16.tflite",
                 "models/filite/skin_lesion_classifier_float16.tflite", 
                 "skin_lesion_classifier_float16.tflite",

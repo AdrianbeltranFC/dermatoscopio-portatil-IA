@@ -1,0 +1,9 @@
+=== DERMASCAN PRO - ANÁLISIS COMPLETO ===
+Fecha: 2025-12-02 21:16:40
+Imagen: C:/Users/silvi/OneDrive/Documents/dermatoscopio-portatil-IA/imagenes para pruebas/melanoma.jpg
+Resultado: MALIGNO - Melanoma (Confianza: 89.4%)
+Confianza: 89.4%
+Área de lesión: 52504 píxeles
+Contornos detectados: 1
+Tecnología: Segmentación Canal Azul + Otsu + EfficientNetB0
+============================================================

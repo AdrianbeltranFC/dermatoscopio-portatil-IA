@@ -1,0 +1,9 @@
+                precision    recall  f1-score   support
+
+      Melanoma       0.52      0.72      0.60       117
+Nevo (Benigno)       0.96      0.87      0.91       688
+          Otro       0.63      0.78      0.70        94
+
+      accuracy                           0.84       899
+     macro avg       0.70      0.79      0.74       899
+  weighted avg       0.87      0.84      0.85       899
