@@ -188,6 +188,7 @@ class DermatologyModel:
         try:
             # RUTAS DONDE BUSCAR TU MODELO
             possible_paths = [
+                "models/tflite/skin_lesion_float32_FINAL.tflite"
                 "models/skin_lesion_classifier_float16.tflite",
                 "models/filite/skin_lesion_classifier_float16.tflite", 
                 "skin_lesion_classifier_float16.tflite",
@@ -248,8 +249,8 @@ class DermatologyModel:
             image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             
             if self.input_details[0]['dtype'] == np.float32:
-                # Normalización [0, 1] para float32
-                image_normalized = image_rgb.astype(np.float32) / 255.0
+                    # EfficientNet usa 0-255, NO DIVIDIR
+                    image_normalized = image_rgb.astype(np.float32)
             elif self.input_details[0]['dtype'] == np.uint8:
                 # Sin normalización para uint8
                 image_normalized = image_rgb.astype(np.uint8)
