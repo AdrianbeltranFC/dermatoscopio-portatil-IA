@@ -1,9 +1,10 @@
-                precision    recall  f1-score   support
+ REPORTE FINAL (PARA EL CONGRESO):
+              precision    recall  f1-score   support
 
-      Melanoma       0.52      0.72      0.60       117
-Nevo (Benigno)       0.96      0.87      0.91       688
-          Otro       0.63      0.78      0.70        94
+    Melanoma     0.6239    0.6239    0.6239       117
+        Nevo     0.9576    0.8866    0.9208       688
+        Otro     0.5931    0.9149    0.7197        94
 
-      accuracy                           0.84       899
-     macro avg       0.70      0.79      0.74       899
-  weighted avg       0.87      0.84      0.85       899
+    accuracy                         0.8554       899
+   macro avg     0.7249    0.8085    0.7548       899
+weighted avg     0.8761    0.8554    0.8611       899
