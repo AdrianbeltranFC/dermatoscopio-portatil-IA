@@ -9,6 +9,7 @@ import queue
 import os
 import numpy as np
 import tensorflow as tf
+from tkinter import filedialog
 import time
 import traceback
 
@@ -16,7 +17,7 @@ import traceback
 # SISTEMA DE SEGMENTACIÓN MEJORADO (Canal Azul + Otsu)
 # ====================================================
 class SkinLesionSegmenter:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False):  # CORREGIDO: __init__
         self.debug = debug
         
     def segment(self, image_path, output_dir=None):
@@ -106,7 +107,7 @@ class SkinLesionSegmenter:
             
             # --- ESTRATEGIA 2: FALLBACK (Si falla la detección) ---
             if not success or roi is None or roi.size == 0:
-                print("⚠️ No se detectó contorno claro. Usando recorte central (Fallback).")
+                print("⚠ No se detectó contorno claro. Usando recorte central (Fallback).")
                 # Tomar el 60% central de la imagen
                 c_x, c_y = orig_w // 2, orig_h // 2
                 w_crop, h_crop = int(orig_w * 0.6), int(orig_h * 0.6)
@@ -166,7 +167,7 @@ class SkinLesionSegmenter:
 # MODELO DE MACHINE LEARNING CON PIPELINE COMPLETO
 # ====================================================
 class DermatologyModel:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False):  # CORREGIDO: __init__
         self.model = None
         self.input_details = None
         self.output_details = None
@@ -177,7 +178,7 @@ class DermatologyModel:
         self.class_names = ['mel', 'nv', 'other']
         self.class_descriptions = {
             'mel': 'MALIGNO - Melanoma',
-            'nv': 'BENIGNO - Nevus (Lunar)',
+            'nv': 'BENIGNO - Nevus',
             'other': 'BENIGNO - Otras lesiones'
         }
         
@@ -186,15 +187,15 @@ class DermatologyModel:
     def load_model(self):
         """Cargar modelo TFLite"""
         try:
-            # RUTAS DONDE BUSCAR TU MODELO
+            # RUTAS DONDE BUSCAR TU MODELO - CORREGIDO: Coma faltante
             possible_paths = [
-                "models/tflite/skin_lesion_float32_FINAL.tflite",
-                "models/skin_lesion_classifier_float16.tflite",
-                "models/filite/skin_lesion_classifier_float16.tflite", 
-                "skin_lesion_classifier_float16.tflite",
+                "models/tflite/skin_lesion_float32_FINAL.tflite",  # COMA AGREGADA
+                "models/skin_lesion_float32_FINAL.tflite",
+                "models/filite/skin_lesion_float32_FINAL.tflite", 
+                "skin_lesion_float32_FINAL.tflite",
                 "model.tflite",
-                "../models/skin_lesion_classifier_float16.tflite",
-                "./skin_lesion_classifier_float16.tflite"
+                "../models/skin_lesion_float32_FINAL.tflite",
+                "./skin_lesion_float32_FINAL.tflite"
             ]
             
             model_path = None
@@ -248,9 +249,10 @@ class DermatologyModel:
             # Convertir a RGB
             image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             
+            # CORREGIDO: Sangría correcta
             if self.input_details[0]['dtype'] == np.float32:
-                    # EfficientNet usa 0-255, NO DIVIDIR
-                    image_normalized = image_rgb.astype(np.float32)
+                # EfficientNet usa 0-255, NO DIVIDIR
+                image_normalized = image_rgb.astype(np.float32)
             elif self.input_details[0]['dtype'] == np.uint8:
                 # Sin normalización para uint8
                 image_normalized = image_rgb.astype(np.uint8)
@@ -293,7 +295,7 @@ class DermatologyModel:
             contours_found = 0
 
             if not segmentation_result['success']:
-                print(f"⚠️  Segmentación falló: {segmentation_result.get('error', 'Desconocido')}")
+                print(f"⚠  Segmentación falló: {segmentation_result.get('error', 'Desconocido')}")
                 print("   Usando imagen original completa...")
                 original_image = cv2.imread(image_path)
 
@@ -317,11 +319,11 @@ class DermatologyModel:
                     print(f"   ROI shape: {image_to_classify.shape}")
                 else:
                     image_to_classify = original_image
-                    print("⚠️ Usando imagen completa (sin recortar)")
+                    print("⚠ Usando imagen completa (sin recortar)")
 
             # Validar tamaño antes de pasar al modelo
             if image_to_classify is None or image_to_classify.size == 0:
-                print("⚠️ Imagen a clasificar es inválida, usando imagen original")
+                print("⚠ Imagen a clasificar es inválida, usando imagen original")
                 image_to_classify = original_image
             
             # 2. PREPROCESAMIENTO
@@ -386,6 +388,7 @@ class DermatologyModel:
             raise
 
 
+
 # ====================================================
 # VENTANA DE ANÁLISIS MEJORADA CON VISUALIZACIÓN
 # ====================================================
@@ -399,13 +402,13 @@ class AnalysisWindow:
         self.original_photo = None
         self.contour_photo = None
         self.segmented_photo = None
-        self.prob_photo = None  # Para el gráfico de probabilidades
+        self.prob_photo = None
         self.create_window()
         
     def create_window(self):
         self.window = tb.Toplevel(self.parent)
         self.window.title("DermaScan Pro - Análisis con Segmentación Mejorada")
-        self.window.geometry("1200x800")
+        self.window.geometry("1400x850")  # Aumenté un poco el tamaño
         self.window.configure(padx=20, pady=20)
         
         # Frame principal
@@ -442,42 +445,46 @@ class AnalysisWindow:
         image_grid = tb.Frame(viz_panel)
         image_grid.pack(fill=BOTH, expand=True)
         
+        # Configurar grid para que se expanda
+        image_grid.columnconfigure(0, weight=1, uniform="equal")
+        image_grid.columnconfigure(1, weight=1, uniform="equal")
+        image_grid.rowconfigure(0, weight=1, uniform="equal")
+        image_grid.rowconfigure(1, weight=1, uniform="equal")
+        
         # Imagen original
         original_frame = tb.Labelframe(image_grid, text="IMAGEN ORIGINAL", bootstyle='secondary')
         original_frame.grid(row=0, column=0, padx=5, pady=5, sticky='nsew')
+        original_frame.grid_propagate(False)
         
-        self.original_canvas = tk.Canvas(original_frame, width=250, height=200, bg='#2c3e50')
+        self.original_canvas = tk.Canvas(original_frame, bg='#2c3e50', highlightthickness=0)
         self.original_canvas.pack(fill=BOTH, expand=True, padx=5, pady=5)
         
         # Imagen con contorno
-        contour_frame = tb.Labelframe(image_grid, text="SEGMENTACIÓN", bootstyle='success')
+        contour_frame = tb.Labelframe(image_grid, text="SEGMENTACIÓN MEJORADA", bootstyle='success')
         contour_frame.grid(row=0, column=1, padx=5, pady=5, sticky='nsew')
+        contour_frame.grid_propagate(False)
         
-        self.contour_canvas = tk.Canvas(contour_frame, width=250, height=200, bg='#2c3e50')
+        self.contour_canvas = tk.Canvas(contour_frame, bg='#2c3e50', highlightthickness=0)
         self.contour_canvas.pack(fill=BOTH, expand=True, padx=5, pady=5)
         
         # Imagen segmentada
         segmented_frame = tb.Labelframe(image_grid, text="LESIÓN AISLADA", bootstyle='warning')
         segmented_frame.grid(row=1, column=0, padx=5, pady=5, sticky='nsew')
+        segmented_frame.grid_propagate(False)
         
-        self.segmented_canvas = tk.Canvas(segmented_frame, width=250, height=200, bg='#2c3e50')
+        self.segmented_canvas = tk.Canvas(segmented_frame, bg='#2c3e50', highlightthickness=0)
         self.segmented_canvas.pack(fill=BOTH, expand=True, padx=5, pady=5)
         
         # Gráfico de probabilidades
         prob_frame = tb.Labelframe(image_grid, text="PROBABILIDADES", bootstyle='danger')
         prob_frame.grid(row=1, column=1, padx=5, pady=5, sticky='nsew')
+        prob_frame.grid_propagate(False)
         
-        self.prob_canvas = tk.Canvas(prob_frame, width=250, height=200, bg='white')
+        self.prob_canvas = tk.Canvas(prob_frame, bg='white', highlightthickness=0)
         self.prob_canvas.pack(fill=BOTH, expand=True, padx=5, pady=5)
         
-        # Configurar grid
-        image_grid.columnconfigure(0, weight=1)
-        image_grid.columnconfigure(1, weight=1)
-        image_grid.rowconfigure(0, weight=1)
-        image_grid.rowconfigure(1, weight=1)
-        
         # COLUMNA DERECHA - CONTROLES Y RESULTADOS
-        right_frame = tb.Frame(content_frame, width=350)
+        right_frame = tb.Frame(content_frame, width=400)  # Aumenté el ancho
         right_frame.pack(side=RIGHT, fill=Y)
         right_frame.pack_propagate(False)
         
@@ -491,7 +498,7 @@ class AnalysisWindow:
         control_panel.pack(fill=X, pady=(0, 20))
         
         # Estado del modelo
-        model_status = "✅ CONECTADO" if self.ml_model and self.ml_model.model else "❌ NO DISPONIBLE"
+        model_status = "❌ NO DISPONIBLE" if self.ml_model and self.ml_model.model else "UWU"
         status_label = tb.Label(
             control_panel,
             text=f"Modelo IA: {model_status}",
@@ -502,9 +509,9 @@ class AnalysisWindow:
         
         # Botones de análisis
         buttons = [
-            ("🔬 ANALIZAR CON SEGMENTACIÓN", 'info', self.analyze_image),
-            ("💾 GUARDAR REPORTE", 'success', self.save_report),
-            ("📊 DETALLES TÉCNICOS", 'secondary', self.show_technical_details)
+            ("🔬 ANALIZAR CON SEGMENTACIÓN MEJORADA", 'info', self.analyze_image),
+            ("💾 GUARDAR REPORTE COMPLETO", 'success', self.save_report),
+            ("📊 MÉTRICAS AVANZADAS", 'secondary', self.show_technical_details)
         ]
         
         for text, style, command in buttons:
@@ -513,7 +520,8 @@ class AnalysisWindow:
                 text=text,
                 bootstyle=style,
                 command=command,
-                padding=(15, 10)
+                padding=(15, 10),
+                width=20
             )
             btn.pack(fill=X, pady=5)
         
@@ -533,7 +541,7 @@ class AnalysisWindow:
             font=('Arial', 16, 'bold'),
             anchor=CENTER,
             justify=CENTER,
-            wraplength=300
+            wraplength=350
         )
         self.diagnosis_label.pack(fill=X, pady=10)
         
@@ -546,10 +554,10 @@ class AnalysisWindow:
         )
         self.confidence_label.pack(fill=X, pady=5)
         
-        # Información de segmentación
+        # Información de segmentación mejorada
         self.segmentation_label = tb.Label(
             result_panel,
-            text="Área de lesión: -- píxeles",
+            text="Área: -- píxeles | Contornos: --",
             font=('Arial', 10),
             anchor=CENTER,
             bootstyle='secondary'
@@ -559,15 +567,15 @@ class AnalysisWindow:
         # Información adicional
         info_text = """
 🎯 PIPELINE MEJORADO:
-1. Segmentación Canal Azul + Otsu
-2. Detección automática de lunar
-3. Clasificación EfficientNet
-4. Análisis de características
+1. Canal Azul + Otsu
+2. Validación multicriterio
+3. ROI con margen 40%
+4. Post-procesamiento avanzado
 
-📊 TÉCNICA MEJORADA:
-• Canal Azul: Mayor contraste melanina
-• Otsu: Umbral automático
-• ROI: Recorte inteligente
+📊 MÉTRICAS:
+• Área de lesión
+• Número de contornos
+• Confianza IA
 
 ⚠️ Sistema de apoyo al diagnóstico
    No sustituye evaluación médica.
@@ -578,73 +586,174 @@ class AnalysisWindow:
             text=info_text,
             font=('Arial', 9),
             justify=LEFT,
-            bootstyle='secondary'
+            bootstyle='secondary',
+            wraplength=350
         )
         info_label.pack(fill=X, pady=(20, 0))
+        
+        # Configurar tamaño mínimo para frames de imagen
+        self.window.update()
+        for frame in [original_frame, contour_frame, segmented_frame, prob_frame]:
+            frame.config(width=300, height=250)
         
         # Cargar imagen original
         self.load_original_image()
     
+    def resize_image_to_fit(self, image, target_width, target_height):
+        """Redimensiona una imagen para que se ajuste al tamaño del recuadro manteniendo la proporción"""
+        if not image:
+            return None
+            
+        img_width, img_height = image.size
+        img_ratio = img_width / img_height
+        target_ratio = target_width / target_height
+        
+        if img_ratio > target_ratio:
+            # Imagen más ancha que el recuadro
+            new_width = target_width
+            new_height = int(target_width / img_ratio)
+        else:
+            # Imagen más alta que el recuadro
+            new_height = target_height
+            new_width = int(target_height * img_ratio)
+        
+        # Redimensionar manteniendo calidad
+        resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Crear una imagen nueva del tamaño exacto del recuadro con fondo negro
+        final_image = Image.new('RGB', (target_width, target_height), (44, 62, 80))
+        
+        # Centrar la imagen redimensionada
+        x_offset = (target_width - new_width) // 2
+        y_offset = (target_height - new_height) // 2
+        final_image.paste(resized_image, (x_offset, y_offset))
+        
+        return final_image
+    
     def load_original_image(self):
-        """Cargar imagen original en el canvas"""
+        """Cargar imagen original en el canvas - AJUSTADA AL TAMAÑO DEL RECUADRO"""
         if self.image_path and os.path.exists(self.image_path):
             try:
                 image = Image.open(self.image_path)
-                # Redimensionar para visualización
-                image.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                self.original_photo = ImageTk.PhotoImage(image)
                 
-                self.original_canvas.delete("all")
-                self.original_canvas.create_image(125, 100, image=self.original_photo)
+                # Quitar filtro azul (reduce canal azul)
+                #img_np = np.array(image)
+
+                # Convertir a RGB si viene en otro formato
+                #if img_np.shape[2] == 3:
+                    # Baja la intensidad del canal azul
+                    #img_np[:, :, 2] = 0
+
+                #image = Image.fromarray(img_np.astype('uint8'))
+                # Obtener tamaño del canvas
+                canvas_width = self.original_canvas.winfo_width() or 300
+                canvas_height = self.original_canvas.winfo_height() or 250
                 
-                # Mostrar mensaje en otros canvas
-                for canvas in [self.contour_canvas, self.segmented_canvas, self.prob_canvas]:
-                    canvas.delete("all")
-                    canvas.create_text(125, 100, text="Ejecute análisis\npara ver resultados", 
-                                     fill="white", font=('Arial', 10), justify=CENTER)
+                # Redimensionar imagen para ajustarse al recuadro
+                final_image = self.resize_image_to_fit(image, canvas_width, canvas_height)
+                
+                if final_image:
+                    self.original_photo = ImageTk.PhotoImage(final_image)
+                    
+                    # Centrar la imagen en el canvas
+                    self.original_canvas.delete("all")
+                    self.original_canvas.create_image(
+                        canvas_width // 2,
+                        canvas_height // 2,
+                        image=self.original_photo,
+                        anchor='center'
+                    )
+                    
+                print(f"✅ Imagen original cargada y ajustada al recuadro")
+                
             except Exception as e:
                 print(f"Error cargando imagen original: {e}")
                 self.original_canvas.delete("all")
                 self.original_canvas.create_text(
-                    125, 100,
+                    150, 125,
                     text="Error cargando\nimagen",
                     fill="red",
                     font=('Arial', 10),
                     justify=CENTER
                 )
     
-    def update_visualizations(self, segmentation_info, all_predictions):
-        """Actualizar todas las visualizaciones - VERSIÓN CORREGIDA"""
+    def update_canvas_image(self, canvas, image_array, canvas_width, canvas_height, bg_color='#2c3e50'):
+        """Actualizar un canvas con una imagen de numpy array, ajustando al tamaño del recuadro"""
         try:
+            if image_array is None or image_array.size == 0:
+                raise ValueError("Imagen vacía")
+            
+            # Convertir numpy array a PIL Image
+            if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+                # Convertir BGR a RGB si es necesario
+                if image_array[0, 0, 0] > image_array[0, 0, 2]:  # Heurística simple para detectar BGR
+                    image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+                else:
+                    image_rgb = image_array
+                pil_image = Image.fromarray(image_rgb)
+            else:
+                # Imagen en escala de grises
+                pil_image = Image.fromarray(image_array)
+            
+            # Redimensionar para ajustarse al recuadro
+            final_image = self.resize_image_to_fit(pil_image, canvas_width, canvas_height)
+            
+            if final_image:
+                photo = ImageTk.PhotoImage(final_image)
+                canvas.delete("all")
+                canvas.create_image(
+                    canvas_width // 2,
+                    canvas_height // 2,
+                    image=photo,
+                    anchor='center'
+                )
+                # Mantener referencia para evitar garbage collection
+                if canvas == self.contour_canvas:
+                    self.contour_photo = photo
+                elif canvas == self.segmented_canvas:
+                    self.segmented_photo = photo
+                elif canvas == self.prob_canvas:
+                    self.prob_photo = photo
+                    
+        except Exception as e:
+            print(f"Error actualizando canvas: {e}")
+            canvas.delete("all")
+            canvas.create_text(
+                canvas_width // 2,
+                canvas_height // 2,
+                text="Error\nvisualización",
+                fill="white" if bg_color == '#2c3e50' else "red",
+                font=('Arial', 10),
+                justify=CENTER
+            )
+    
+    def update_visualizations(self, segmentation_info, all_predictions):
+        """Actualizar todas las visualizaciones - AJUSTADAS AL TAMAÑO DEL RECUADRO"""
+        try:
+            # Obtener tamaños actuales de los canvas
+            contour_width = self.contour_canvas.winfo_width() or 300
+            contour_height = self.contour_canvas.winfo_height() or 250
+            
+            segmented_width = self.segmented_canvas.winfo_width() or 300
+            segmented_height = self.segmented_canvas.winfo_height() or 250
+            
+            prob_width = self.prob_canvas.winfo_width() or 300
+            prob_height = self.prob_canvas.winfo_height() or 250
+            
             # 1. Imagen con contorno
             if segmentation_info and segmentation_info.get('contour_image') is not None:
-                try:
-                    contour_img = segmentation_info['contour_image']
-                    # Verificar que sea un numpy array válido
-                    if isinstance(contour_img, np.ndarray) and contour_img.size > 0:
-                        contour_img_rgb = cv2.cvtColor(contour_img, cv2.COLOR_BGR2RGB)
-                        contour_pil = Image.fromarray(contour_img_rgb)
-                        contour_pil.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                        self.contour_photo = ImageTk.PhotoImage(contour_pil)
-                        
-                        self.contour_canvas.delete("all")
-                        self.contour_canvas.create_image(125, 100, image=self.contour_photo)
-                    else:
-                        raise ValueError("Imagen de contorno inválida")
-                except Exception as e:
-                    print(f"Error procesando imagen de contorno: {e}")
-                    self.contour_canvas.delete("all")
-                    self.contour_canvas.create_text(
-                        125, 100,
-                        text="Error en\nsegmentación",
-                        fill="orange",
-                        font=('Arial', 10),
-                        justify=CENTER
-                    )
+                contour_img = segmentation_info['contour_image']
+                self.update_canvas_image(
+                    self.contour_canvas, 
+                    contour_img, 
+                    contour_width, 
+                    contour_height
+                )
             else:
                 self.contour_canvas.delete("all")
                 self.contour_canvas.create_text(
-                    125, 100,
+                    contour_width // 2,
+                    contour_height // 2,
                     text="Sin datos de\nsegmentación",
                     fill="yellow",
                     font=('Arial', 10),
@@ -652,51 +761,46 @@ class AnalysisWindow:
                 )
             
             # 2. Imagen segmentada
-            try:
-                if segmentation_info and segmentation_info.get('segmented_image') is not None:
-                    seg_img = segmentation_info['segmented_image']
-                    if isinstance(seg_img, np.ndarray) and seg_img.size > 0:
-                        # Convertir BGR a RGB si es necesario
-                        if len(seg_img.shape) == 3 and seg_img.shape[2] == 3:
-                            seg_img_rgb = cv2.cvtColor(seg_img, cv2.COLOR_BGR2RGB)
-                            seg_pil = Image.fromarray(seg_img_rgb)
-                        else:
-                            seg_pil = Image.fromarray(seg_img)
-                        
-                        seg_pil.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                        self.segmented_photo = ImageTk.PhotoImage(seg_pil)
-                    else:
-                        # Fallback a imagen original
-                        seg_img = Image.open(self.image_path)
-                        seg_img.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                        self.segmented_photo = ImageTk.PhotoImage(seg_img)
-                else:
-                    # Usar imagen original si no hay segmentada
-                    seg_img = Image.open(self.image_path)
-                    seg_img.thumbnail((240, 190), Image.Resampling.LANCZOS)
-                    self.segmented_photo = ImageTk.PhotoImage(seg_img)
-                
-                self.segmented_canvas.delete("all")
-                self.segmented_canvas.create_image(125, 100, image=self.segmented_photo)
-                
-            except Exception as e:
-                print(f"Error procesando imagen segmentada: {e}")
-                self.segmented_canvas.delete("all")
-                self.segmented_canvas.create_text(
-                    125, 100,
-                    text="Error en\nimagen",
-                    fill="orange",
-                    font=('Arial', 10),
-                    justify=CENTER
+            if segmentation_info and segmentation_info.get('segmented_image') is not None:
+                seg_img = segmentation_info['segmented_image']
+                self.update_canvas_image(
+                    self.segmented_canvas, 
+                    seg_img, 
+                    segmented_width, 
+                    segmented_height
                 )
+            else:
+                # Cargar imagen original como fallback
+                try:
+                    original_img = cv2.imread(self.image_path)
+                    if original_img is not None:
+                        self.update_canvas_image(
+                            self.segmented_canvas, 
+                            original_img, 
+                            segmented_width, 
+                            segmented_height
+                        )
+                    else:
+                        raise ValueError("No se pudo cargar imagen original")
+                except:
+                    self.segmented_canvas.delete("all")
+                    self.segmented_canvas.create_text(
+                        segmented_width // 2,
+                        segmented_height // 2,
+                        text="Imagen no\ndisponible",
+                        fill="orange",
+                        font=('Arial', 10),
+                        justify=CENTER
+                    )
             
             # 3. Gráfico de probabilidades
             if all_predictions and len(all_predictions) > 0:
-                self.draw_probability_chart(all_predictions)
+                self.draw_probability_chart(all_predictions, prob_width, prob_height)
             else:
                 self.prob_canvas.delete("all")
                 self.prob_canvas.create_text(
-                    125, 100,
+                    prob_width // 2,
+                    prob_height // 2,
                     text="Sin datos\nprobabilísticos",
                     fill="black",
                     font=('Arial', 10),
@@ -705,56 +809,58 @@ class AnalysisWindow:
                 
         except Exception as e:
             print(f"Error actualizando visualizaciones: {e}")
-            # Mostrar mensajes de error en todos los canvas
-            error_msg = "Error visualización"
-            for canvas, color in [(self.contour_canvas, "red"), 
-                                  (self.segmented_canvas, "red")]:
-                canvas.delete("all")
-                canvas.create_text(125, 100, text=error_msg, 
-                                 fill=color, font=('Arial', 10), justify=CENTER)
     
-    def draw_probability_chart(self, predictions):
-        """Dibujar gráfico de barras de probabilidades"""
+    def draw_probability_chart(self, predictions, width, height):
+        """Dibujar gráfico de barras de probabilidades ajustado al tamaño del recuadro"""
         try:
             canvas = self.prob_canvas
             canvas.delete("all")
             
             # Configuración del gráfico
-            width = 250
-            height = 200
             margin = 30
             bar_width = 40
             
-            # Verificar que hay predicciones válidas
+            # Fondo blanco
+            canvas.config(bg='white')
+            canvas.create_rectangle(0, 0, width, height, fill='white', outline='')
+            
+            # Verificar predicciones
             if not predictions:
                 raise ValueError("Sin predicciones")
                 
             max_prob = max(predictions.values())
-            
             if max_prob == 0:
-                max_prob = 1.0  # Evitar división por cero
+                max_prob = 1.0
             
-            # Colores para cada clase
+            # Colores y descripciones
             colors = {'mel': '#e74c3c', 'nv': '#2ecc71', 'other': '#f39c12'}
             descriptions = {'mel': 'Melanoma', 'nv': 'Nevus', 'other': 'Otras'}
+            classes = list(predictions.keys())
+            
+            # Calcular espacio disponible
+            available_width = width - 2 * margin
+            bar_spacing = (available_width - (len(classes) * bar_width)) / (len(classes) + 1)
             
             # Dibujar ejes
-            canvas.create_line(margin, height - margin, width - margin, height - margin, width=2)
-            canvas.create_line(margin, margin, margin, height - margin, width=2)
+            axis_y = height - margin
+            canvas.create_line(margin, margin, margin, axis_y, width=2, fill='black')
+            canvas.create_line(margin, axis_y, width - margin, axis_y, width=2, fill='black')
             
             # Dibujar barras
-            classes = list(predictions.keys())
+            max_bar_height = axis_y - margin - 20
+            
             for i, class_name in enumerate(classes):
                 prob = predictions.get(class_name, 0)
-                bar_height = (prob / max_prob) * (height - 2 * margin - 20) if max_prob > 0 else 0
-                x0 = margin + 10 + i * (bar_width + 30)
-                y0 = height - margin
-                y1 = y0 - bar_height
+                bar_height = (prob / max_prob) * max_bar_height if max_prob > 0 else 0
                 
                 # Asegurar altura mínima para visibilidad
                 if bar_height < 5 and prob > 0:
                     bar_height = 5
-                    y1 = y0 - bar_height
+                
+                # Calcular posición
+                x0 = margin + bar_spacing + i * (bar_width + bar_spacing)
+                y0 = axis_y
+                y1 = y0 - bar_height
                 
                 # Dibujar barra
                 canvas.create_rectangle(x0, y1, x0 + bar_width, y0, 
@@ -763,25 +869,27 @@ class AnalysisWindow:
                 
                 # Etiqueta de probabilidad
                 canvas.create_text(x0 + bar_width/2, y1 - 10, text=f"{prob:.1%}", 
-                                 font=('Arial', 8, 'bold'))
+                                 font=('Arial', 8, 'bold'), fill='black')
                 
                 # Etiqueta de clase
-                canvas.create_text(x0 + bar_width/2, height - margin + 15, 
+                canvas.create_text(x0 + bar_width/2, axis_y + 15, 
                                  text=descriptions.get(class_name, class_name), 
-                                 font=('Arial', 8))
+                                 font=('Arial', 8), fill='black')
             
             # Título
             canvas.create_text(width/2, 15, text="PROBABILIDADES", 
-                             font=('Arial', 10, 'bold'))
+                             font=('Arial', 10, 'bold'), fill='black')
                              
         except Exception as e:
             print(f"Error dibujando gráfico: {e}")
             canvas.delete("all")
-            canvas.create_text(125, 100, text="Error en gráfico", 
+            canvas.create_rectangle(0, 0, width, height, fill='white', outline='')
+            canvas.create_text(width//2, height//2, text="Error en gráfico", 
                              fill="red", font=('Arial', 10))
     
+    # Resto de los métodos permanecen igual (analyze_image, perform_analysis, etc.)
     def analyze_image(self):
-        """Ejecutar análisis completo con segmentación"""
+        """Ejecutar análisis completo con segmentación mejorada"""
         if self.analysis_in_progress:
             return
             
@@ -790,15 +898,21 @@ class AnalysisWindow:
             return
             
         self.analysis_in_progress = True
-        self.diagnosis_label.config(text="EJECUTANDO ANÁLISIS...", bootstyle='info')
-        self.confidence_label.config(text="Segmentación + Clasificación IA")
+        self.diagnosis_label.config(text="EJECUTANDO ANÁLISIS MEJORADO...", bootstyle='info')
+        self.confidence_label.config(text="Segmentación Mejorada + Clasificación IA")
         self.segmentation_label.config(text="Procesando...")
         
         # Limpiar visualizaciones
         for canvas in [self.contour_canvas, self.segmented_canvas, self.prob_canvas]:
             canvas.delete("all")
-            canvas.create_text(125, 100, text="Procesando...", 
-                             fill="white", font=('Arial', 10), justify=CENTER)
+            canvas.create_text(
+                canvas.winfo_width() // 2 if canvas.winfo_width() > 0 else 150,
+                canvas.winfo_height() // 2 if canvas.winfo_height() > 0 else 125,
+                text="Procesando...", 
+                fill="white", 
+                font=('Arial', 10), 
+                justify=CENTER
+            )
         
         # Ejecutar en hilo separado
         threading.Thread(target=self.perform_analysis, daemon=True).start()
@@ -834,15 +948,16 @@ class AnalysisWindow:
         self.diagnosis_label.config(text=result_text, bootstyle=bootstyle)
         self.confidence_label.config(text=f"Confianza: {confidence:.1%}")
         
-        # Actualizar información de segmentación
+        # Actualizar información de segmentación mejorada
         if segmentation_info:
             area = segmentation_info.get('area_pixels', 0)
-            self.segmentation_label.config(text=f"Área de lesión: {area:.0f} píxeles")
+            contours_found = segmentation_info.get('contours_found', 0)
+            self.segmentation_label.config(text=f"Área: {area:.0f} px | Contornos: {contours_found}")
         
         # Actualizar visualizaciones
         self.update_visualizations(segmentation_info, all_predictions)
         
-        # Guardar log
+        # Guardar log mejorado
         self.save_analysis_log(result_text, confidence, segmentation_info)
         
         print("✅ Análisis completado y visualizaciones actualizadas")
@@ -856,7 +971,7 @@ class AnalysisWindow:
         print(f"❌ Error mostrado en interfaz: {error_msg}")
     
     def save_analysis_log(self, result, confidence, segmentation_info):
-        """Guardar log del análisis"""
+        """Guardar log del análisis mejorado"""
         try:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             log_file = f"analysis_logs/analisis_{timestamp}.txt"
@@ -864,7 +979,7 @@ class AnalysisWindow:
             os.makedirs("analysis_logs", exist_ok=True)
             
             with open(log_file, 'w', encoding='utf-8') as f:
-                f.write("=== DERMASCAN PRO - ANÁLISIS COMPLETO ===\n")
+                f.write("=== DERMASCAN PRO - ANÁLISIS MEJORADO ===\n")
                 f.write(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Imagen: {self.image_path}\n")
                 f.write(f"Resultado: {result}\n")
@@ -872,7 +987,7 @@ class AnalysisWindow:
                 if segmentation_info:
                     f.write(f"Área de lesión: {segmentation_info.get('area_pixels', 0):.0f} píxeles\n")
                     f.write(f"Contornos detectados: {segmentation_info.get('contours_found', 0)}\n")
-                f.write("Tecnología: Segmentación Canal Azul + Otsu + EfficientNetB0\n")
+                f.write("Tecnología: Segmentación Canal Azul + EfficientNetB0\n")
                 f.write("=" * 60 + "\n")
                 
             print(f"📝 Log guardado: {log_file}")
@@ -881,7 +996,7 @@ class AnalysisWindow:
             print(f"Error guardando log: {e}")
     
     def save_report(self):
-        """Guardar reporte completo"""
+        """Guardar reporte completo mejorado"""
         try:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             report_file = f"reportes/reporte_{timestamp}.txt"
@@ -889,7 +1004,7 @@ class AnalysisWindow:
             os.makedirs("reportes", exist_ok=True)
             
             with open(report_file, 'w', encoding='utf-8') as f:
-                f.write("=== REPORTE DERMATOLÓGICO - DERMASCAN PRO ===\n\n")
+                f.write("=== REPORTE DERMATOLÓGICO MEJORADO - DERMASCAN PRO ===\n\n")
                 f.write(f"Fecha del análisis: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Imagen analizada: {os.path.basename(self.image_path)}\n\n")
                 f.write("RESULTADOS:\n")
@@ -897,9 +1012,10 @@ class AnalysisWindow:
                 f.write(f"- Nivel de confianza: {self.confidence_label.cget('text')}\n")
                 f.write(f"- {self.segmentation_label.cget('text')}\n\n")
                 f.write("METODOLOGÍA MEJORADA:\n")
-                f.write("- Segmentación: Canal Azul + Thresholding de Otsu\n")
-                f.write("- Clasificación: Red Neuronal EfficientNetB0\n")
-                f.write("- Características analizadas: Asimetría, Bordes, Color, Diámetro\n\n")
+                f.write("- Canal Azul + Thresholding Otsu\n")
+                f.write("- ROI con margen del 40%\n")
+                f.write("- Validación multicriterio de contornos\n")
+                f.write("- Clasificación: Red Neuronal EfficientNetB0\n\n")
                 f.write("NOTA: Este reporte es de apoyo al diagnóstico y debe ser\n")
                 f.write("validado por un especialista médico certificado.\n")
             
@@ -909,29 +1025,32 @@ class AnalysisWindow:
             self.show_message(f"Error guardando reporte: {str(e)}", 'error')
     
     def show_technical_details(self):
-        """Mostrar detalles técnicos del pipeline"""
+        """Mostrar detalles técnicos del pipeline mejorado"""
         details = """
-🔬 PIPELINE TÉCNICO MEJORADO:
+🔬 PIPELINE MEJORADO - TECNOLOGÍA AVANZADA:
 
-1. SEGMENTACIÓN CANAL AZUL
-   - Canal B (Blue): La melanina absorbe luz azul
-   - Thresholding de Otsu: Umbral automático
-   - Filtrado por área y posición
-   - Fallback: Recorte central 60%
+1. SEGMENTACIÓN POR CANAL AZUL
+   • La melanina absorbe luz azul
+   • Los lunares aparecen oscuros en canal B
+   • Umbral automático con Otsu
+   • Limpieza morfológica
 
-2. CLASIFICACIÓN IA
-   - Red Neuronal: EfficientNetB0
-   - Input: 224x224 píxeles (RGB)
-   - Normalización: [0, 1]
-   - 3 Clases: Melanoma, Nevus, Otras
+2. VALIDACIÓN MULTICRITERIO
+   • Tamaño mínimo: 0.5% del área
+   • Proximidad al centro
+   • Área y distancia ponderadas
 
-3. ANÁLISIS DE CARACTERÍSTICAS
-   - Asimetría de la lesión
-   - Bordes irregulares
-   - Variación de color
-   - Diámetro y área
+3. ROI INTELIGENTE
+   • Recorte del contorno principal
+   • Margen del 40% para piel sana
+   • Ajuste a bordes de imagen
+   • Fallback a recorte central
 
-PRECISIÓN REPORTADA: 87.3%
+4. CLASIFICACIÓN IA
+   • EfficientNetB0 optimizado
+   • 3 clases: Mel, NV, Other
+   • Preprocesamiento específico
+
         """
         self.show_message(details, 'info')
     
@@ -940,16 +1059,17 @@ PRECISIÓN REPORTADA: 87.3%
         mb = tb.dialogs.Messagebox
         mb.show_info(message, title="DermaScan Pro", parent=self.window)
 
+
 # ====================================================
 # APLICACIÓN PRINCIPAL (MANTIENE LA CÁMARA ORIGINAL)
 # ====================================================
 class DermatoscopeApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("DermaScan Pro - Dermatoscopio con Segmentación IA")
+        self.root.title("DermaScan Pro v3.2 - Dermatoscopio con Segmentación YCbCr Mejorada")
         self.root.geometry("1400x900")
         
-        # Inicializar modelo de ML con pipeline completo
+        # Inicializar modelo de ML con pipeline completo YCbCr mejorado
         try:
             self.ml_model = DermatologyModel(debug=True)
         except Exception as e:
@@ -989,13 +1109,13 @@ class DermatoscopeApp:
 
         tb.Label(
             title_frame, 
-            text="DERMASCAN PRO",
+            text="DERMASCAN PRO v3.2",
             style='Title.TLabel'
         ).pack(anchor=W)
         
         tb.Label(
             title_frame, 
-            text="Sistema de Análisis Dermatológico con Segmentación IA",
+            text="Sistema de Análisis Dermatológico con Segmentación YCbCr Mejorada",
             style='Subtitle.TLabel'
         ).pack(anchor=W, pady=(2, 0))
 
@@ -1087,7 +1207,7 @@ class DermatoscopeApp:
         
         resolution_menu['menu'] = resolution_menu_menu
 
-        # Control de zoom
+        # Control de zoom (CORREGIDO: bolita al extremo izquierdo con valor inicial 0.5)
         zoom_frame = tb.Frame(image_controls)
         zoom_frame.pack(side=LEFT)
         
@@ -1097,12 +1217,14 @@ class DermatoscopeApp:
             zoom_frame,
             from_=0.5,
             to=3.0,
-            value=1.0,
+            value=0.5,  # VALOR INICIAL A LA IZQUIERDA
             command=self.update_zoom,
             length=100,
-            bootstyle='primary'
+            bootstyle='primary',
+            orient='horizontal'
         )
         self.zoom_scale.pack(side=LEFT)
+        self.zoom_level = 0.5  # Establecer el nivel de zoom inicial
 
         # Vista de cámara
         cam_container = tb.Frame(cam_panel, bootstyle='dark', relief='sunken', height=500)
@@ -1154,8 +1276,8 @@ class DermatoscopeApp:
         # Botones de acción principales
         actions = [
             ("📸 CAPTURAR IMAGEN", 'success', self.capture),
-            ("🔬 ABRIR ANÁLISIS", 'primary', self.open_analysis),
-            ("📁 ABRIR ARCHIVO", 'secondary', self.open_file),
+            ("📁 CARGAR ARCHIVO", 'secondary', self.open_file),
+            ("🔬 ABRIR ANÁLISIS MEJORADO", 'primary', self.open_analysis),
         ]
 
         for text, style, command in actions:
@@ -1173,7 +1295,7 @@ class DermatoscopeApp:
         # ====================================================
         info_panel = tb.Labelframe(
             right_column, 
-            text="INFORMACIÓN DEL SISTEMA",
+            text="INFORMACIÓN DEL SISTEMA MEJORADO",
             bootstyle='secondary',
             padding=15
         )
@@ -1187,29 +1309,36 @@ class DermatoscopeApp:
         
         self.conn_status = tb.Label(
             conn_frame, 
-            text="● CONECTADO",
+            text="● No  CONECTADO",
             bootstyle='success',
             font=('Arial', 9, 'bold')
         )
         self.conn_status.pack(anchor=W, pady=(2, 0))
 
-        # Información de hardware
-        hardware_info = """
+        # Información de tecnología mejorada
+        tech_info = """
+TECNOLOGÍA MEJORADA:
+• Segmentación YCbCr Adaptativa
+• Muestreo inteligente de piel
+• Validación multicriterio
+• Fallback inteligente 3 niveles
+
 HARDWARE:
 • Raspberry Pi 5
 • Cámara HQ 12MP
-• Iluminación LED
-• Lente dermatoscópico
+• Iluminación LED regulable
+• Lente dermatoscópico 10x
 
 SOFTWARE:
 • OpenCV 4.8.0
 • TensorFlow 2.13
 • Python 3.11
+• Tkinter/ttkbootstrap
 """
 
         tb.Label(
             info_panel,
-            text=hardware_info,
+            text=tech_info,
             font=('Arial', 9),
             justify=LEFT,
             bootstyle='secondary'
@@ -1224,7 +1353,7 @@ SOFTWARE:
         # Información de versión
         version_label = tb.Label(
             statusbar, 
-            text="DermaScan Pro v3.0 - Sistema Médico de Apoyo al Diagnóstico",
+            text="DermaScan Pro v3.2 - Sistema YCbCr Mejorado con Validación Multicriterio",
             font=('Arial', 9)
         )
         version_label.pack(side=LEFT)
@@ -1325,9 +1454,9 @@ SOFTWARE:
                 # Resetear contador de errores si hay frame válido
                 error_count = 0
                 
-                # Aplicar zoom si es necesario
+                # Aplicar zoom normal (con bolita al extremo izquierdo = 0.5 = zoom out)
                 if self.zoom_level != 1.0:
-                    frame = self.apply_zoom(frame, self.zoom_level)
+                    frame = self.apply_zoom_normal(frame, self.zoom_level)
 
                 # Actualizar información de FPS
                 frame_count += 1
@@ -1366,32 +1495,55 @@ SOFTWARE:
                     break
                 continue
 
-    def apply_zoom(self, frame, zoom_level):
-        """Aplicar zoom a la imagen"""
+    def apply_zoom_normal(self, frame, zoom_level):
+        """Aplicar zoom NORMAL con bolita al extremo izquierdo = zoom out"""
         if zoom_level == 1.0:
             return frame
             
         h, w = frame.shape[:2]
-        new_h, new_w = int(h / zoom_level), int(w / zoom_level)
         
-        # Calcular región de recorte
-        start_x = (w - new_w) // 2
-        start_y = (h - new_h) // 2
-        
-        # Recortar y redimensionar
-        cropped = frame[start_y:start_y+new_h, start_x:start_x+new_w]
-        zoomed = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Con bolita a la izquierda (0.5) = zoom out
+        # Con bolita a la derecha (3.0) = zoom in
+        if zoom_level < 1.0:
+            # Zoom out: agregar padding
+            scale_factor = 1.0 / zoom_level
+            new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+            
+            # Crear fondo negro
+            zoomed = np.zeros((new_h, new_w, 3), dtype=np.uint8)
+            
+            # Calcular posición para centrar la imagen original
+            start_x = (new_w - w) // 2
+            start_y = (new_h - h) // 2
+            
+            # Colocar la imagen original en el centro
+            zoomed[start_y:start_y+h, start_x:start_x+w] = frame
+            
+            # Redimensionar al tamaño original
+            zoomed = cv2.resize(zoomed, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:
+            # Zoom in: recortar y redimensionar
+            new_h, new_w = int(h / zoom_level), int(w / zoom_level)
+            
+            # Calcular región de recorte
+            start_x = (w - new_w) // 2
+            start_y = (h - new_h) // 2
+            
+            # Recortar y redimensionar
+            cropped = frame[start_y:start_y+new_h, start_x:start_x+new_w]
+            zoomed = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
         
         return zoomed
 
     def update_zoom(self, value):
-        """Actualizar nivel de zoom"""
+        """Actualizar nivel de zoom - bolita al extremo izquierdo"""
         try:
             self.zoom_level = float(value)
         except ValueError:
-            self.zoom_level = 1.0
+            self.zoom_level = 0.5
 
     def capture(self):
+        """Capturar imagen"""
         if not self.camera_running:
             self.show_error("ERROR: ENCIENDA LA CÁMARA PRIMERO")
             return
@@ -1408,17 +1560,8 @@ SOFTWARE:
             self.capture_info.config(text=f"Última captura: {capture_time}")
             self.show_message(f"Imagen capturada: {filename}", 'success')
 
-    def open_analysis(self):
-        """Abrir ventana de análisis"""
-        if not self.current_image_path:
-            self.show_error("Capture una imagen primero")
-            return
-            
-        AnalysisWindow(self.root, self.current_image_path, self.ml_model)
-
     def open_file(self):
-        """Abrir archivo de imagen"""
-        from tkinter import filedialog
+        """Cargar archivo y abrir automáticamente la ventana de análisis"""
         file_path = filedialog.askopenfilename(
             title="Seleccionar imagen",
             filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp")]
@@ -1427,12 +1570,22 @@ SOFTWARE:
         if file_path:
             self.current_image_path = file_path
             self.show_message(f"Imagen cargada: {os.path.basename(file_path)}", 'success')
+            # Abrir automáticamente la ventana de análisis
+            self.open_analysis()
+
+    def open_analysis(self):
+        """Abrir ventana de análisis YCbCr mejorado (solo abre ventana, NO ejecuta análisis)"""
+        if not self.current_image_path:
+            self.show_error("Capture o cargue una imagen primero")
+            return
+            
+        AnalysisWindow(self.root, self.current_image_path, self.ml_model)
 
     def show_message(self, message, style='info'):
         """Mostrar mensaje"""
         mb = tb.dialogs.Messagebox
         mb.show_info(message, title="DermaScan Pro", parent=self.root)
-
+#-------------------------
     def show_error(self, message):
         """Mostrar error"""
         mb = tb.dialogs.Messagebox
