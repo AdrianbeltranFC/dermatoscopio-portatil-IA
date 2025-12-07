@@ -1,5 +1,5 @@
 """
-🚀 SCRIPT OPTIMIZADOR DE ACCURACY (CON TTA)
+SCRIPT OPTIMIZADOR DE ACCURACY (CON TTA)
 -------------------------------------------
 1. Usa TTA (Test Time Augmentation) para mejorar predicciones.
 2. Barre todos los umbrales para encontrar el PICO de Accuracy.
