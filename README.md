@@ -1,220 +1,126 @@
-# 🏥 Dermatoscopio Portátil con IA
+# 🏥 DermaScan Pro: Dermatoscopio Portátil con IA
 
-## 📋 Descripción
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-2.12-FF6F00?style=flat&logo=tensorflow)
+![Raspberry Pi](https://img.shields.io/badge/Hardware-Raspberry%20Pi%205-C51A4A?style=flat&logo=raspberry-pi)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-Sistema **de segmentación + clasificación** de lesiones cutáneas usando:
-- **Segmentación YCbCr**: Robusta a variaciones de tono de piel
-- **Clasificación EfficientNetB0**: 3 categorías (Melanoma, Nevo Benigno, Otros)
-- **Validación en Raspberry Pi 5**: Con cámara en vivo
-
-### ✨ Características
-
-- ✅ **Segmentación YCbCr** (desacoplada de luminancia)
-- ✅ **Mitigación de sesgo** con Dark Skin Simulation
-- ✅ **Optimizado para todo tipo de pieles** (incluidas pieles oscuras)
-- ✅ **Entrenamiento en Google Colab** (GPU gratuita)
-- ✅ **Inferencia Raspberry Pi 5** (TFLite optimizado)
-- ✅ **Visualización dual**: Segmentación + Clasificación
+Sistema embebido de **apoyo al diagnóstico dermatológico** diseñado para clasificar lesiones cutáneas en tiempo real. El proyecto se centra en la robustez frente a variaciones de iluminación y tonos de piel (especialmente pieles oscuras), utilizando visión por computadora y Deep Learning (EfficientNetB0).
 
 ---
 
-## 🚀 INICIO RÁPIDO: Entrenar en Google Colab
+## 📋 Descripción del Proyecto
 
-### Paso 1: Preparar datos localmente (en tu computadora)
+Este repositorio contiene el código fuente, documentación y herramientas de entrenamiento para un dermatoscopio digital inteligente. El sistema es capaz de:
+
+1.  **Segmentar** la lesión de la piel sana utilizando algoritmos de visión artificial adaptativos.
+2.  **Clasificar** la lesión en 3 categorías clínicas críticas.
+3.  **Ejecutarse en el borde (Edge AI)** sobre una Raspberry Pi 5 o en PC de escritorio.
+
+### ✨ Características Principales
+
+* **Segmentación Híbrida:** Implementación de algoritmos **YCbCr Adaptativo** y **Canal Azul + Otsu** para aislar lunares incluso en pieles con alta melanina.
+* **Modelo EfficientNetB0:** Red neuronal convolucional optimizada mediante Transfer Learning.
+* **Optimización TFLite:** Inferencia cuantizada (Float16) para latencia baja (~50ms) en Raspberry Pi.
+* **Interfaz Gráfica (GUI):** Aplicación de escritorio moderna (Tkinter + ttkbootstrap) con visualización de probabilidades y generación de reportes.
+* **Dataset Balanceado:** Pipeline de datos customizado que mapea el dataset HAM10000 a 3 clases clínicas y corrige el desbalanceo.
+
+---
+
+## 🛠️ Hardware Recomendado
+
+* **Procesador:** Raspberry Pi 5 (o PC con Windows/Linux para la versión de escritorio).
+* **Cámara:** Raspberry Pi Camera Module 3 (o Webcam USB de alta resolución con macro).
+* **Óptica:** Lente dermatoscópico (10x) con iluminación LED controlada.
+
+---
+
+## 📊 Metodología Técnica
+
+### 1. Pipeline de Datos (HAM10000)
+El script `src/03_data_pipeline.py` procesa las 7 clases originales del dataset HAM10000 y las agrupa en 3 categorías clínicas para facilitar el triaje:
+
+| Clase Modelo | Descripción | Clases Originales HAM10000 | Acción Sugerida |
+| :--- | :--- | :--- | :--- |
+| **mel** | **Melanoma (Maligno)** | `mel` | 🚨 Derivar a especialista urgente |
+| **nv** | **Nevo (Benigno)** | `nv` | ✅ Seguimiento rutinario |
+| **other** | **Otras Lesiones** | `bkl`, `bcc`, `akiec`, `vasc`, `df` | ⚠️ Evaluar según caso |
+
+### 2. Segmentación Adaptativa
+
+Se abordaron los retos de iluminación variable y pieles oscuras mediante dos estrategias (ver `Interfaz/app.py`):
+* **Estrategia Principal (Canal Azul + Otsu):** Aprovecha que la melanina absorbe fuertemente la luz azul. Se aplica un umbral automático (Otsu) sobre el canal B para separar la lesión.
+* **Fallback (ROI Inteligente):** Si la segmentación falla, el sistema aplica un recorte central con margen del 40% para asegurar que la red neuronal reciba contexto de piel sana.
+
+### 3. Modelo de Clasificación
+Se utiliza **EfficientNetB0** debido a su eficiencia de parámetros (5.3M).
+* **Entrenamiento:** Técnica de "Infinite Repeat" para balancear físicamente las clases minoritarias (Melanoma).
+* **Input:** Imágenes de 224x224 píxeles (Valores crudos 0-255, sin normalización 1/255 previa, ajustado en capas internas).
+* **Métricas (Validación):** Recall en Melanoma > 80% (Priorizando sensibilidad sobre especificidad).
+
+---
+
+## 🚀 Instalación y Uso
+
+### Prerrequisitos
+Clona el repositorio e instala las dependencias:
 
 ```bash
-# 1. Descargar dataset HAM10000 (~10GB)
-python src/01_download_metadata.py --output data/metadata.csv
-
-# 2. Procesar y dividir en train/val/test (7 clases → 3 clases)
-python src/03_data_pipeline.py --meta data/metadata.csv --out data/processed
-
-# 3. Crear ZIP comprimido
-python create_data_zip.py --output data_processed.zip
-
-# 4. Verificar tamaño (debe ser ~2.3GB)
-ls -lh data_processed.zip
-```
-
-### Paso 2: Subir a Google Drive
-
-1. Ve a **Google Drive**: https://drive.google.com
-2. Sube `data_processed.zip` a **Mi unidad** (carpeta raíz)
-
-### Paso 3: Entrenar en Google Colab
-
-Ve a **Google Colab**: https://colab.research.google.com
-
-**Copia EXACTAMENTE esto en UNA SOLA CELDA:**
-
-```python
-# Celda única para Colab - VERSIÓN CORREGIDA
-import subprocess, sys, os
-
-print("[1/6] Instalando dependencias...")
-for pkg in ['tensorflow', 'scikit-learn', 'pandas', 'matplotlib', 'opencv-python']:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
-print("✓ Listo\n")
-
-print("[2/6] Montando Google Drive...")
-from google.colab import drive
-drive.mount('/content/drive')
-print("✓ Listo\n")
-
-print("[3/6] Clonando repositorio...")
-os.chdir('/content')
-os.system('git clone https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git 2>/dev/null')
-os.chdir('dermatoscopio-portatil-IA')
-print("✓ Listo\n")
-
-print("[4/6] Descargando datos...")
-os.system("cp '/content/drive/MyDrive/data_processed.zip' .")
-
-# IMPORTANTE: Usar -v (verbose) para ver progreso, y verificar resultado
-print("Descomprimiendo...")
-result = os.system("unzip -q data_processed.zip && echo 'OK' || echo 'ERROR'")
-
-# Verificar que se descomprimió correctamente
-import glob
-train_mel = glob.glob('data/processed/train/mel/*.jpg')
-train_nv = glob.glob('data/processed/train/nv/*.jpg')
-train_other = glob.glob('data/processed/train/other/*.jpg')
-
-total = len(train_mel) + len(train_nv) + len(train_other)
-print(f"\n✓ Imágenes en TRAIN:")
-print(f"  mel: {len(train_mel)}")
-print(f"  nv: {len(train_nv)}")
-print(f"  other: {len(train_other)}")
-print(f"  TOTAL: {total}\n")
-
-if total == 0:
-    print("❌ ERROR: No se encontraron imágenes")
-    print("Intentando descompresión manual...")
-    os.system("unzip data_processed.zip")
-    print("Verificando de nuevo...")
-    os.system("ls -la data/processed/train/")
-else:
-    print("[5/6] Entrenando modelo...")
-    os.system('python train.py --epochs 30 --fine_tune --tflite')
-    
-    print("\n[6/6] Descargando modelos...")
-    os.system('zip -r -q models.zip models/')
-    from google.colab import files
-    files.download('models.zip')
-    print("✓ Descarga completada")
-```
-
-**Presiona Ctrl+Enter y espera (15-40 minutos)**
-
----
-
-## 📊 Clases del Modelo
-
-| Clase | Descripción | Muestras |
-|-------|-------------|----------|
-| **mel** | Melanoma (maligno) | 1,113 |
-| **nv** | Nevo Benigno (Lunar) | 6,705 |
-| **other** | Otras lesiones | 2,197 |
-
-**Total:** 10,015 imágenes | **División:** 70% train, 15% val, 15% test
-
----
-
-## 🎯 Pipeline Técnico Completo
-
-### 1. Segmentación (YCbCr)
-
-**Uso local:**
-```python
-from src.segmentation import SkinLesionSegmenter
-
-segmenter = SkinLesionSegmenter(debug=True)
-result = segmenter.segment("lesion.jpg", output_dir="./results/")
-
-if result['success']:
-    print(f"✓ Lesión segmentada")
-    print(f"  Área: {result['area']:.0f} píxeles")
-```
-
-**¿Por qué YCbCr?**
-- RGB: Luminancia y crominancia entrelazadas → **falla en pieles oscuras**
-- YCbCr: Y (luminancia) **SEPARADA** de Cb-Cr (crominancia)
-- Piel normal agrupa en: **Cb ∈ [77,127], Cr ∈ [133,173]** (independiente del tono)
-- Lesiones se desvían de este clúster (detectable en cualquier tono)
-
-### 2. Clasificación (EfficientNetB0)
-
-**Uso local:**
-```python
-from src.inference import SkinLesionInference
-
-inference = SkinLesionInference("models/skin_lesion_classifier.h5")
-result = inference.process_image("lesion.jpg", output_dir="./results/")
-
-if result['success']:
-    print(f"✓ Clasificación: {result['class']}")
-    print(f"✓ Confianza: {result['confidence']*100:.1f}%")
-    for clase, prob in result['all_predictions'].items():
-        print(f"  {clase}: {prob*100:.1f}%")
-```
-
-### 3. Visualización Dual
-
-La salida muestra:
-- **Imagen Original + Contorno** de la lesión
-- **Máscara de Segmentación** (blanco = lesión)
-- **Resultado**: Clase + Confianza (%)
-
----
-
-## 📱 Uso en Raspberry Pi 5
-
-```python
-from src.raspberry_pi_app import RaspberryPiApp
-
-# Iniciar app
-app = RaspberryPiApp("models/tflite/skin_lesion_classifier_float16.tflite")
-app.run(save_dir="./captures/")
-
-# Controles en vivo:
-# 's' - Capturar imagen y procesar
-# 'q' - Salir
-```
-
-**Requisitos en Raspberry Pi:**
-```bash
-pip install tensorflow tflite-runtime opencv-python pillow numpy
-```
-
----
-
-## 💻 Instalación Local
-
-```bash
-# Clonar
-git clone https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git
+git clone [https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git](https://github.com/AdrianbeltranFC/dermatoscopio-portatil-IA.git)
 cd dermatoscopio-portatil-IA
 
-# Entorno virtual
+# Crear entorno virtual (Recomendado)
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate  # En Windows: venv\Scripts\activate
 
-# Instalar dependencias
+# Instalar librerías
 pip install -r requirements.txt
 ```
+ ### 🖥️ Opción A: Aplicación de Escritorio (PC/Laptop)
+ Interfaz completa con carga de archivos, control de cámara USB y generación de reportes.
+ ```
+ python Interfaz/app.py
+  ```
+  Funciones: Zoom digital, selección de resolución, visualización de máscaras de segmentación y gráficos de confianza.
 
-**Entrenar localmente:**
-```bash
-python train.py \
-  --data_dir data/processed \
-  --epochs 30 \
-  --batch_size 32 \
-  --learning_rate 1e-3 \
-  --fine_tune \
-  --tflite \
-  --tflite_format float16
+### 🍓 Opción B: Aplicación Raspberry Pi (Modo Embebido)
+Versión ligera optimizada para pantalla táctil y controles físicos.
 ```
+ # Asegúrate de tener el modelo .tflite en la carpeta correcta
+python Interfaz/raspberry_pi_app.py --model models/tflite/skin_lesion_float32_FINAL.tflite
+  ```
+Controles: Tecla s para capturar/analizar, q para salir.
 
----
+## 🧠 Entrenamiento del Modelo (Google Colab)
+Si deseas re-entrenar el modelo desde cero:
+
+Descargar Datos: Ejecuta el script de descarga de metadatos.
+```
+python src/01_download_metadata.py --output data/metadata.csv
+  ```
+Procesar Dataset: Divide y organiza las imágenes.
+```
+python src/03_data_pipeline.py --meta data/metadata.csv --out data/processed
+  ```
+Entrenar: Sube el zip procesado a Drive y utiliza el notebook proporcionado en README anterior o el script de entrenamiento principal.
 
 ## 📂 Estructura del Repositorio
+
+```
+dermatoscopio-portatil-IA/
+├── data/                  # Scripts de gestión de datos y metadatos
+├── Documentación técnica/ # Justificación teórica y solución de retos
+├── Interfaz/              # Aplicaciones de usuario final
+│   ├── app.py             # GUI Escritorio (Tkinter + Otsu)
+│   └── raspberry_pi_app.py # App ligera para RPi
+├── models/                # Archivos .h5 y .tflite (no incluidos en repo por peso)
+├── src/                   # Código fuente del pipeline de ML
+│   ├── 03_data_pipeline.py # División Train/Val/Test
+│   ├── 07_inference.py     # Lógica de inferencia pura
+│   ├── dataset.py          # Clases de carga de datos
+│   └── segmentation.py     # Algoritmos de visión artificial base
+└── requirements.txt       # Dependencias del proyecto
+```
+
+
+Para mas información puedes consultar la documentación técnica. 
