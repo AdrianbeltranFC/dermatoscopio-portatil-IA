@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 import tkinter as tk
@@ -9,9 +10,45 @@ import queue
 import os
 import numpy as np
 import tensorflow as tf
-from tkinter import filedialog
+from tkinter import filedialog, font as tkfont
 import time
 import traceback
+
+
+# ====================================================
+# COMPATIBILIDAD DE TEXTO PARA UBUNTU / LINUX
+# ====================================================
+# Tkinter en Ubuntu no siempre renderiza bien emojis o fuentes como Arial.
+# DejaVu Sans viene normalmente instalada y soporta bien acentos en español.
+APP_FONT_FAMILY = "DejaVu Sans"
+
+
+def configurar_fuentes_tk(root):
+    """Aplica una fuente legible y compatible en toda la interfaz Tk/ttk."""
+    try:
+        familias = set(tkfont.families(root))
+        fuente = APP_FONT_FAMILY if APP_FONT_FAMILY in familias else "TkDefaultFont"
+
+        for nombre_fuente in (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkFixedFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+            "TkTooltipFont",
+        ):
+            try:
+                tkfont.nametofont(nombre_fuente).configure(family=fuente)
+            except Exception:
+                pass
+
+        root.option_add("*Font", f"{fuente} 10")
+        return fuente
+    except Exception:
+        return APP_FONT_FAMILY
 
 # ====================================================
 # SISTEMA DE SEGMENTACIÓN MEJORADO (Canal Azul + Otsu)
@@ -107,7 +144,7 @@ class SkinLesionSegmenter:
             
             # --- ESTRATEGIA 2: FALLBACK (Si falla la detección) ---
             if not success or roi is None or roi.size == 0:
-                print("⚠ No se detectó contorno claro. Usando recorte central (Fallback).")
+                print("[AVISO] No se detectó contorno claro. Usando recorte central (Fallback).")
                 # Tomar el 60% central de la imagen
                 c_x, c_y = orig_w // 2, orig_h // 2
                 w_crop, h_crop = int(orig_w * 0.6), int(orig_h * 0.6)
@@ -140,12 +177,12 @@ class SkinLesionSegmenter:
             }
 
             if self.debug:
-                print(f"✅ Segmentación completada. ROI shape: {roi.shape}")
+                print(f"[OK] Segmentación completada. ROI shape: {roi.shape}")
 
             return result
             
         except Exception as e:
-            print(f"❌ Error crítico en segmentación: {e}")
+            print(f"[ERROR] Error crítico en segmentación: {e}")
             import traceback
             traceback.print_exc()
             # Retorno de emergencia: devolver imagen original
@@ -178,7 +215,7 @@ class DermatologyModel:
         self.class_names = ['mel', 'nv', 'other']
         self.class_descriptions = {
             'mel': 'MALIGNO - Melanoma',
-            'nv': 'BENIGNO - Nevus',
+            'nv': 'BENIGNO - Nevus (Lunar)',
             'other': 'BENIGNO - Otras lesiones'
         }
         
@@ -189,27 +226,25 @@ class DermatologyModel:
         try:
             # RUTAS DONDE BUSCAR TU MODELO - CORREGIDO: Coma faltante
             possible_paths = [
-                "models/tflite/skin_lesion_float32_FINAL.tflite",  # COMA AGREGADA
-                "models/skin_lesion_float32_FINAL.tflite",
-                "models/filite/skin_lesion_float32_FINAL.tflite", 
-                "skin_lesion_float32_FINAL.tflite",
-                "model.tflite",
-                "../models/skin_lesion_float32_FINAL.tflite",
-                "./skin_lesion_float32_FINAL.tflite"
-            ]
+            "models/skin_lesion_float16.tflite",   # principal
+            "skin_lesion_float16.tflite",          # por si lo dejas junto al .py
+            "./skin_lesion_float16.tflite",
+            "../models/skin_lesion_float16.tflite"
+        ]
+
             
             model_path = None
             for path in possible_paths:
                 if os.path.exists(path):
                     model_path = path
-                    print(f"✅ Modelo encontrado en: {path}")
+                    print(f"[OK] Modelo encontrado en: {path}")
                     break
             
             if not model_path:
                 current_dir = os.path.cwd()
-                print(f"❌ MODELO NO ENCONTRADO")
-                print(f"📂 Directorio actual: {current_dir}")
-                print(f"🔍 Buscado en:")
+                print(f"[ERROR] MODELO NO ENCONTRADO")
+                print(f"[DIR] Directorio actual: {current_dir}")
+                print(f"[BUSCAR] Buscado en:")
                 for path in possible_paths:
                     print(f"   - {os.path.abspath(path)}")
                 raise FileNotFoundError(
@@ -218,7 +253,7 @@ class DermatologyModel:
                     "2. Colócalo en una de las rutas mostradas arriba\n"
                     "3. O especifica la ruta manualmente")
             
-            print("🔄 Cargando modelo de IA...")
+            print("[...] Cargando modelo de IA...")
             
             # Cargar el modelo
             self.model = tf.lite.Interpreter(model_path=model_path)
@@ -228,13 +263,13 @@ class DermatologyModel:
             self.input_details = self.model.get_input_details()
             self.output_details = self.model.get_output_details()
             
-            print("✅ Modelo de IA cargado exitosamente!")
-            print(f"📊 Input shape: {self.input_details[0]['shape']}")
-            print(f"📊 Input dtype: {self.input_details[0]['dtype']}")
-            print(f"📊 Output shape: {self.output_details[0]['shape']}")
+            print("[OK] Modelo de IA cargado exitosamente!")
+            print(f"[DATOS] Input shape: {self.input_details[0]['shape']}")
+            print(f"[DATOS] Input dtype: {self.input_details[0]['dtype']}")
+            print(f"[DATOS] Output shape: {self.output_details[0]['shape']}")
             
         except Exception as e:
-            print(f"❌ Error cargando el modelo: {e}")
+            print(f"[ERROR] Error cargando el modelo: {e}")
             raise
     
     def preprocess_image(self, image):
@@ -263,13 +298,13 @@ class DermatologyModel:
             image_batch = np.expand_dims(image_normalized, axis=0)
             
             if self.debug:
-                print(f"🎯 Imagen procesada: {image_batch.shape}")
+                print(f"[OBJETIVO] Imagen procesada: {image_batch.shape}")
                 print(f"   Min: {image_batch.min():.3f}, Max: {image_batch.max():.3f}")
             
             return image_batch
             
         except Exception as e:
-            print(f"❌ Error procesando imagen: {e}")
+            print(f"[ERROR] Error procesando imagen: {e}")
             if self.debug:
                 import traceback
                 traceback.print_exc()
@@ -279,11 +314,11 @@ class DermatologyModel:
         """Pipeline completo: Segmentación + Clasificación - VERSIÓN CORREGIDA"""
         try:
             print("\n" + "="*60)
-            print("🔬 INICIANDO PIPELINE COMPLETO DE ANÁLISIS")
+            print("[ANALISIS] INICIANDO PIPELINE COMPLETO DE ANÁLISIS")
             print("="*60)
 
             # 1. SEGMENTACIÓN MEJORADA
-            print("📐 Ejecutando segmentación mejorada (Canal Azul + Otsu)...")
+            print("[SEGMENTACION] Ejecutando segmentación mejorada (Canal Azul + Otsu)...")
             segmentation_result = self.segmenter.segment(image_path, output_dir)
             
             # Inicializar variables para todos los casos
@@ -295,7 +330,7 @@ class DermatologyModel:
             contours_found = 0
 
             if not segmentation_result['success']:
-                print(f"⚠  Segmentación falló: {segmentation_result.get('error', 'Desconocido')}")
+                print(f"[AVISO]  Segmentación falló: {segmentation_result.get('error', 'Desconocido')}")
                 print("   Usando imagen original completa...")
                 original_image = cv2.imread(image_path)
 
@@ -310,30 +345,30 @@ class DermatologyModel:
                 area = segmentation_result.get('area', 0)
                 contours_found = segmentation_result.get('contours_found', 0)
                 has_segmentation = True
-                print(f"✅ Segmentación completada")
+                print(f"[OK] Segmentación completada")
                 
                 # CORRECCIÓN VITAL: Priorizar el ROI (Recorte) para la predicción
                 if 'roi' in segmentation_result and segmentation_result['roi'] is not None:
                     image_to_classify = segmentation_result['roi']
-                    print("🚀 Usando ROI (Recorte del lunar) para el modelo")
+                    print("[ROI] Usando ROI (Recorte del lunar) para el modelo")
                     print(f"   ROI shape: {image_to_classify.shape}")
                 else:
                     image_to_classify = original_image
-                    print("⚠ Usando imagen completa (sin recortar)")
+                    print("[AVISO] Usando imagen completa (sin recortar)")
 
             # Validar tamaño antes de pasar al modelo
             if image_to_classify is None or image_to_classify.size == 0:
-                print("⚠ Imagen a clasificar es inválida, usando imagen original")
+                print("[AVISO] Imagen a clasificar es inválida, usando imagen original")
                 image_to_classify = original_image
             
             # 2. PREPROCESAMIENTO
-            print("🔄 Preprocesando imagen para clasificación...")
+            print("[...] Preprocesando imagen para clasificación...")
             input_data = self.preprocess_image(image_to_classify)
             if input_data is None:
                 raise ValueError("Error en preprocesamiento de imagen")
             
             # 3. CLASIFICACIÓN
-            print("🧠 Ejecutando clasificación con IA...")
+            print("[IA] Ejecutando clasificación con IA...")
             self.model.set_tensor(self.input_details[0]['index'], input_data)
             self.model.invoke()
             
@@ -346,10 +381,10 @@ class DermatologyModel:
                 exp_preds = np.exp(predictions - np.max(predictions))
                 predictions = exp_preds / exp_preds.sum()
             
-            print(f"📊 Predicciones raw: {predictions}")
+            print(f"[DATOS] Predicciones raw: {predictions}")
 
             # 4. POST-PROCESAMIENTO
-            print("\n📈 PASO 4: Interpretación de resultados...")
+            print("\n[RESULTADOS] PASO 4: Interpretación de resultados...")
             predicted_class_idx = np.argmax(predictions)
             confidence = predictions[predicted_class_idx]
             predicted_class = self.class_names[predicted_class_idx]
@@ -375,13 +410,13 @@ class DermatologyModel:
             }
             
             print("\n" + "="*60)
-            print(f"✅ RESULTADO FINAL: {result_text}")
+            print(f"[OK] RESULTADO FINAL: {result_text}")
             print("="*60 + "\n")
             
             return result_text, confidence, all_predictions, segmentation_info
             
         except Exception as e:
-            print(f"\n❌ ERROR EN PIPELINE: {e}")
+            print(f"\n[ERROR] ERROR EN PIPELINE: {e}")
             if self.debug:
                 import traceback
                 traceback.print_exc()
@@ -419,7 +454,7 @@ class AnalysisWindow:
         title_label = tb.Label(
             main_frame,
             text="ANÁLISIS DERMATOLÓGICO CON SEGMENTACIÓN MEJORADA IA",
-            font=('Arial', 18, 'bold'),
+            font=(APP_FONT_FAMILY, 18, 'bold'),
             bootstyle='primary'
         )
         title_label.pack(pady=(0, 20))
@@ -498,20 +533,20 @@ class AnalysisWindow:
         control_panel.pack(fill=X, pady=(0, 20))
         
         # Estado del modelo
-        model_status = "❌ NO DISPONIBLE" if self.ml_model and self.ml_model.model else "UWU"
+        model_status = "[OK] CONECTADO" if self.ml_model and self.ml_model.model else "[ERROR] NO DISPONIBLE"
         status_label = tb.Label(
             control_panel,
             text=f"Modelo IA: {model_status}",
-            font=('Arial', 10, 'bold'),
+            font=(APP_FONT_FAMILY, 10, 'bold'),
             bootstyle='success' if self.ml_model and self.ml_model.model else 'danger'
         )
         status_label.pack(fill=X, pady=5)
         
         # Botones de análisis
         buttons = [
-            ("🔬 ANALIZAR CON SEGMENTACIÓN MEJORADA", 'info', self.analyze_image),
-            ("💾 GUARDAR REPORTE COMPLETO", 'success', self.save_report),
-            ("📊 MÉTRICAS AVANZADAS", 'secondary', self.show_technical_details)
+            ("[ANALISIS] ANALIZAR CON SEGMENTACIÓN MEJORADA", 'info', self.analyze_image),
+            ("[GUARDAR] GUARDAR REPORTE COMPLETO", 'success', self.save_report),
+            ("[DATOS] MÉTRICAS AVANZADAS", 'secondary', self.show_technical_details)
         ]
         
         for text, style, command in buttons:
@@ -538,7 +573,7 @@ class AnalysisWindow:
         self.diagnosis_label = tb.Label(
             result_panel,
             text="ESPERANDO ANÁLISIS",
-            font=('Arial', 16, 'bold'),
+            font=(APP_FONT_FAMILY, 16, 'bold'),
             anchor=CENTER,
             justify=CENTER,
             wraplength=350
@@ -549,7 +584,7 @@ class AnalysisWindow:
         self.confidence_label = tb.Label(
             result_panel,
             text="Confianza: --%",
-            font=('Arial', 12),
+            font=(APP_FONT_FAMILY, 12),
             anchor=CENTER
         )
         self.confidence_label.pack(fill=X, pady=5)
@@ -558,7 +593,7 @@ class AnalysisWindow:
         self.segmentation_label = tb.Label(
             result_panel,
             text="Área: -- píxeles | Contornos: --",
-            font=('Arial', 10),
+            font=(APP_FONT_FAMILY, 10),
             anchor=CENTER,
             bootstyle='secondary'
         )
@@ -566,25 +601,25 @@ class AnalysisWindow:
         
         # Información adicional
         info_text = """
-🎯 PIPELINE MEJORADO:
+[OBJETIVO] PIPELINE MEJORADO:
 1. Canal Azul + Otsu
 2. Validación multicriterio
 3. ROI con margen 40%
 4. Post-procesamiento avanzado
 
-📊 MÉTRICAS:
-• Área de lesión
-• Número de contornos
-• Confianza IA
+[DATOS] MÉTRICAS:
+- Área de lesión
+- Número de contornos
+- Confianza IA
 
-⚠️ Sistema de apoyo al diagnóstico
+[AVISO] Sistema de apoyo al diagnóstico
    No sustituye evaluación médica.
         """
         
         info_label = tb.Label(
             result_panel,
             text=info_text,
-            font=('Arial', 9),
+            font=(APP_FONT_FAMILY, 9),
             justify=LEFT,
             bootstyle='secondary',
             wraplength=350
@@ -664,7 +699,7 @@ class AnalysisWindow:
                         anchor='center'
                     )
                     
-                print(f"✅ Imagen original cargada y ajustada al recuadro")
+                print(f"[OK] Imagen original cargada y ajustada al recuadro")
                 
             except Exception as e:
                 print(f"Error cargando imagen original: {e}")
@@ -673,7 +708,7 @@ class AnalysisWindow:
                     150, 125,
                     text="Error cargando\nimagen",
                     fill="red",
-                    font=('Arial', 10),
+                    font=(APP_FONT_FAMILY, 10),
                     justify=CENTER
                 )
     
@@ -723,7 +758,7 @@ class AnalysisWindow:
                 canvas_height // 2,
                 text="Error\nvisualización",
                 fill="white" if bg_color == '#2c3e50' else "red",
-                font=('Arial', 10),
+                font=(APP_FONT_FAMILY, 10),
                 justify=CENTER
             )
     
@@ -756,7 +791,7 @@ class AnalysisWindow:
                     contour_height // 2,
                     text="Sin datos de\nsegmentación",
                     fill="yellow",
-                    font=('Arial', 10),
+                    font=(APP_FONT_FAMILY, 10),
                     justify=CENTER
                 )
             
@@ -789,7 +824,7 @@ class AnalysisWindow:
                         segmented_height // 2,
                         text="Imagen no\ndisponible",
                         fill="orange",
-                        font=('Arial', 10),
+                        font=(APP_FONT_FAMILY, 10),
                         justify=CENTER
                     )
             
@@ -803,7 +838,7 @@ class AnalysisWindow:
                     prob_height // 2,
                     text="Sin datos\nprobabilísticos",
                     fill="black",
-                    font=('Arial', 10),
+                    font=(APP_FONT_FAMILY, 10),
                     justify=CENTER
                 )
                 
@@ -869,23 +904,23 @@ class AnalysisWindow:
                 
                 # Etiqueta de probabilidad
                 canvas.create_text(x0 + bar_width/2, y1 - 10, text=f"{prob:.1%}", 
-                                 font=('Arial', 8, 'bold'), fill='black')
+                                 font=(APP_FONT_FAMILY, 8, 'bold'), fill='black')
                 
                 # Etiqueta de clase
                 canvas.create_text(x0 + bar_width/2, axis_y + 15, 
                                  text=descriptions.get(class_name, class_name), 
-                                 font=('Arial', 8), fill='black')
+                                 font=(APP_FONT_FAMILY, 8), fill='black')
             
             # Título
             canvas.create_text(width/2, 15, text="PROBABILIDADES", 
-                             font=('Arial', 10, 'bold'), fill='black')
+                             font=(APP_FONT_FAMILY, 10, 'bold'), fill='black')
                              
         except Exception as e:
             print(f"Error dibujando gráfico: {e}")
             canvas.delete("all")
             canvas.create_rectangle(0, 0, width, height, fill='white', outline='')
             canvas.create_text(width//2, height//2, text="Error en gráfico", 
-                             fill="red", font=('Arial', 10))
+                             fill="red", font=(APP_FONT_FAMILY, 10))
     
     # Resto de los métodos permanecen igual (analyze_image, perform_analysis, etc.)
     def analyze_image(self):
@@ -910,7 +945,7 @@ class AnalysisWindow:
                 canvas.winfo_height() // 2 if canvas.winfo_height() > 0 else 125,
                 text="Procesando...", 
                 fill="white", 
-                font=('Arial', 10), 
+                font=(APP_FONT_FAMILY, 10), 
                 justify=CENTER
             )
         
@@ -960,7 +995,7 @@ class AnalysisWindow:
         # Guardar log mejorado
         self.save_analysis_log(result_text, confidence, segmentation_info)
         
-        print("✅ Análisis completado y visualizaciones actualizadas")
+        print("[OK] Análisis completado y visualizaciones actualizadas")
     
     def show_analysis_error(self, error_msg):
         """Mostrar error en análisis"""
@@ -968,7 +1003,7 @@ class AnalysisWindow:
         self.diagnosis_label.config(text=error_msg, bootstyle='danger')
         self.confidence_label.config(text="Error en análisis")
         self.segmentation_label.config(text="---")
-        print(f"❌ Error mostrado en interfaz: {error_msg}")
+        print(f"[ERROR] Error mostrado en interfaz: {error_msg}")
     
     def save_analysis_log(self, result, confidence, segmentation_info):
         """Guardar log del análisis mejorado"""
@@ -990,7 +1025,7 @@ class AnalysisWindow:
                 f.write("Tecnología: Segmentación Canal Azul + EfficientNetB0\n")
                 f.write("=" * 60 + "\n")
                 
-            print(f"📝 Log guardado: {log_file}")
+            print(f"[LOG] Log guardado: {log_file}")
                 
         except Exception as e:
             print(f"Error guardando log: {e}")
@@ -1027,30 +1062,31 @@ class AnalysisWindow:
     def show_technical_details(self):
         """Mostrar detalles técnicos del pipeline mejorado"""
         details = """
-🔬 PIPELINE MEJORADO - TECNOLOGÍA AVANZADA:
+[ANALISIS] PIPELINE MEJORADO - TECNOLOGÍA AVANZADA:
 
 1. SEGMENTACIÓN POR CANAL AZUL
-   • La melanina absorbe luz azul
-   • Los lunares aparecen oscuros en canal B
-   • Umbral automático con Otsu
-   • Limpieza morfológica
+   - La melanina absorbe luz azul
+   - Los lunares aparecen oscuros en canal B
+   - Umbral automático con Otsu
+   - Limpieza morfológica
 
 2. VALIDACIÓN MULTICRITERIO
-   • Tamaño mínimo: 0.5% del área
-   • Proximidad al centro
-   • Área y distancia ponderadas
+   - Tamaño mínimo: 0.5% del área
+   - Proximidad al centro
+   - Área y distancia ponderadas
 
 3. ROI INTELIGENTE
-   • Recorte del contorno principal
-   • Margen del 40% para piel sana
-   • Ajuste a bordes de imagen
-   • Fallback a recorte central
+   - Recorte del contorno principal
+   - Margen del 40% para piel sana
+   - Ajuste a bordes de imagen
+   - Fallback a recorte central
 
 4. CLASIFICACIÓN IA
-   • EfficientNetB0 optimizado
-   • 3 clases: Mel, NV, Other
-   • Preprocesamiento específico
+   - EfficientNetB0 optimizado
+   - 3 clases: Mel, NV, Other
+   - Preprocesamiento específico
 
+PRECISIÓN ESTIMADA: 89.5% con validación multicriterio
         """
         self.show_message(details, 'info')
     
@@ -1078,10 +1114,13 @@ class DermatoscopeApp:
         
         # Configurar estilo
         self.style = tb.Style("darkly")
-        self.style.configure('Title.TLabel', font=('Arial', 24, 'bold'))
-        self.style.configure('Subtitle.TLabel', font=('Arial', 11))
-        self.style.configure('PanelTitle.TLabel', font=('Arial', 12, 'bold'))
-        self.style.configure('Status.TLabel', font=('Arial', 10, 'bold'))
+        self.style.configure('.', font=(APP_FONT_FAMILY, 10))
+        self.style.configure('TButton', font=(APP_FONT_FAMILY, 10))
+        self.style.configure('TLabelframe.Label', font=(APP_FONT_FAMILY, 10, 'bold'))
+        self.style.configure('Title.TLabel', font=(APP_FONT_FAMILY, 24, 'bold'))
+        self.style.configure('Subtitle.TLabel', font=(APP_FONT_FAMILY, 11))
+        self.style.configure('PanelTitle.TLabel', font=(APP_FONT_FAMILY, 12, 'bold'))
+        self.style.configure('Status.TLabel', font=(APP_FONT_FAMILY, 10, 'bold'))
         
         # Variables de control de cámara
         self.frame_queue = queue.Queue(maxsize=1)
@@ -1125,7 +1164,7 @@ class DermatoscopeApp:
         
         self.status_label = tb.Label(
             status_frame, 
-            text="● SISTEMA LISTO",
+            text="* SISTEMA LISTO",
             style='Status.TLabel',
             bootstyle='success'
         )
@@ -1154,8 +1193,8 @@ class DermatoscopeApp:
 
         # Botones de control
         cam_controls = [
-            ("📷 Iniciar Cámara", 'outline-primary', self.start_camera),
-            ("⏹️ Detener", 'outline-secondary', self.stop_camera),
+            ("[CAMARA] Iniciar Cámara", 'outline-primary', self.start_camera),
+            ("[DETENER] Detener", 'outline-secondary', self.stop_camera),
         ]
 
         for text, style, command in cam_controls:
@@ -1246,14 +1285,14 @@ class DermatoscopeApp:
         self.cam_info = tb.Label(
             info_frame, 
             text="Resolución: --- | FPS: ---",
-            font=('Arial', 9)
+            font=(APP_FONT_FAMILY, 9)
         )
         self.cam_info.pack(side=LEFT)
 
         self.capture_info = tb.Label(
             info_frame, 
             text="Última captura: ---",
-            font=('Arial', 9)
+            font=(APP_FONT_FAMILY, 9)
         )
         self.capture_info.pack(side=RIGHT)
 
@@ -1275,9 +1314,9 @@ class DermatoscopeApp:
 
         # Botones de acción principales
         actions = [
-            ("📸 CAPTURAR IMAGEN", 'success', self.capture),
-            ("📁 CARGAR ARCHIVO", 'secondary', self.open_file),
-            ("🔬 ABRIR ANÁLISIS MEJORADO", 'primary', self.open_analysis),
+            ("[CAPTURAR] CAPTURAR IMAGEN", 'success', self.capture),
+            ("[ARCHIVO] CARGAR ARCHIVO", 'secondary', self.open_file),
+            ("[ANALISIS] ABRIR ANÁLISIS MEJORADO", 'primary', self.open_analysis),
         ]
 
         for text, style, command in actions:
@@ -1305,41 +1344,41 @@ class DermatoscopeApp:
         conn_frame = tb.Frame(info_panel)
         conn_frame.pack(fill=X, pady=(0, 15))
 
-        tb.Label(conn_frame, text="Conexión Raspberry Pi:", font=('Arial', 10, 'bold')).pack(anchor=W)
+        tb.Label(conn_frame, text="Conexión Raspberry Pi:", font=(APP_FONT_FAMILY, 10, 'bold')).pack(anchor=W)
         
         self.conn_status = tb.Label(
             conn_frame, 
-            text="● No  CONECTADO",
+            text="* CONECTADO",
             bootstyle='success',
-            font=('Arial', 9, 'bold')
+            font=(APP_FONT_FAMILY, 9, 'bold')
         )
         self.conn_status.pack(anchor=W, pady=(2, 0))
 
         # Información de tecnología mejorada
         tech_info = """
 TECNOLOGÍA MEJORADA:
-• Segmentación YCbCr Adaptativa
-• Muestreo inteligente de piel
-• Validación multicriterio
-• Fallback inteligente 3 niveles
+- Segmentación YCbCr Adaptativa
+- Muestreo inteligente de piel
+- Validación multicriterio
+- Fallback inteligente 3 niveles
 
 HARDWARE:
-• Raspberry Pi 5
-• Cámara HQ 12MP
-• Iluminación LED regulable
-• Lente dermatoscópico 10x
+- Raspberry Pi 5
+- Cámara HQ 12MP
+- Iluminación LED regulable
+- Lente dermatoscópico 10x
 
 SOFTWARE:
-• OpenCV 4.8.0
-• TensorFlow 2.13
-• Python 3.11
-• Tkinter/ttkbootstrap
+- OpenCV 4.8.0
+- TensorFlow 2.13
+- Python 3.11
+- Tkinter/ttkbootstrap
 """
 
         tb.Label(
             info_panel,
             text=tech_info,
-            font=('Arial', 9),
+            font=(APP_FONT_FAMILY, 9),
             justify=LEFT,
             bootstyle='secondary'
         ).pack(anchor=W)
@@ -1354,7 +1393,7 @@ SOFTWARE:
         version_label = tb.Label(
             statusbar, 
             text="DermaScan Pro v3.2 - Sistema YCbCr Mejorado con Validación Multicriterio",
-            font=('Arial', 9)
+            font=(APP_FONT_FAMILY, 9)
         )
         version_label.pack(side=LEFT)
 
@@ -1362,7 +1401,7 @@ SOFTWARE:
         self.clock_label = tb.Label(
             statusbar, 
             text="",
-            font=('Arial', 9)
+            font=(APP_FONT_FAMILY, 9)
         )
         self.clock_label.pack(side=RIGHT)
 
@@ -1397,7 +1436,7 @@ SOFTWARE:
             return
         
         self.camera_running = True
-        self.status_label.config(text="● CÁMARA ACTIVA", bootstyle='success')
+        self.status_label.config(text="* CÁMARA ACTIVA", bootstyle='success')
         self.cam_label.config(text="INICIANDO CÁMARA...", bootstyle='info')
 
         # Obtener resolución seleccionada
@@ -1424,7 +1463,7 @@ SOFTWARE:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
             
-            print("✅ Cámara configurada correctamente")
+            print("[OK] Cámara configurada correctamente")
                 
         except Exception as e:
             self.show_error(f"Error de conexión: {str(e)}")
@@ -1446,7 +1485,7 @@ SOFTWARE:
                 if not ret:
                     error_count += 1
                     if error_count >= max_errors:
-                        print("❌ Demasiados errores de cámara, reiniciando...")
+                        print("[ERROR] Demasiados errores de cámara, reiniciando...")
                         self.root.after(0, lambda: self.show_error("Error de cámara. Reinicie la cámara."))
                         break
                     continue
@@ -1602,7 +1641,7 @@ SOFTWARE:
             text="CÁMARA NO INICIADA\n\nHaga clic en 'INICIAR CÁMARA' para comenzar",
             bootstyle='secondary'
         )
-        self.status_label.config(text="● SISTEMA EN ESPERA", bootstyle='secondary')
+        self.status_label.config(text="* SISTEMA EN ESPERA", bootstyle='secondary')
         self.cam_info.config(text="Resolución: --- | FPS: ---")
 
 
@@ -1610,6 +1649,7 @@ SOFTWARE:
 # EJECUCIÓN
 # ====================================================
 if __name__ == "__main__":
-    root = tb.Window(themename="darkly")  
+    root = tb.Window(themename="darkly")
+    configurar_fuentes_tk(root)
     app = DermatoscopeApp(root)
     root.mainloop()
