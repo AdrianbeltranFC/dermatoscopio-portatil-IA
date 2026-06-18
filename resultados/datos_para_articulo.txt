@@ -1,0 +1,12 @@
+=== DATOS PARA REDACCIÓN DEL ARTÍCULO CNIB 2026 ===
+
+1. ESTRATEGIA DE UMBRAL (Thresholding)
+Para compensar el desbalance de clases y priorizar la sensibilidad en el triage clínico, se ajustó el umbral de decisión para la clase Melanoma a 0.28.
+
+2. RESULTADOS OBTENIDOS
+- Recall (Sensibilidad) Melanoma: 80.34%
+- Precision Melanoma: 44.76%
+- Exactitud Global (Accuracy): 80.98%
+
+3. TEXTO SUGERIDO PARA LA SECCIÓN DE RESULTADOS:
+El modelo propuesto fue evaluado utilizando un conjunto de datos de prueba retenido. Implementando una estrategia de reducción de umbral de activación (0.28) para priorizar la detección de lesiones malignas, el sistema alcanzó una sensibilidad del 80.34% para la clase Melanoma. Esta priorización es clínicamente necesaria para un dispositivo de tamizaje de primer contacto, donde el costo de un falso negativo es crítico. La proyección UMAP del espacio latente (Figura X) demuestra visualmente la capacidad del extractor de características para agrupar las lesiones basándose en patrones morfológicos subyacentes, validando que la red asimila estructuras relevantes de la piel.

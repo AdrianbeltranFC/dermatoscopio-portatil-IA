@@ -1,0 +1,5 @@
+=== MÉTRICAS CON UMBRAL 0.30 ===
+Recall (Sensibilidad) Melanoma: 78.63%
+Precision Melanoma: 45.10%
+Exactitud Global (Accuracy): 81.20%
+AUC-ROC Melanoma: 0.899

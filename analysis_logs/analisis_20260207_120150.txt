@@ -1,0 +1,9 @@
+=== DERMASCAN PRO - ANÁLISIS MEJORADO ===
+Fecha: 2026-02-07 12:01:50
+Imagen: C:/Users/silvi/OneDrive/Documents/dermatoscopio-portatil-IA/imagenes para pruebas/nevo.jpg
+Resultado: BENIGNO - Nevus (Confianza: 90.4%)
+Confianza: 90.4%
+Área de lesión: 77096 píxeles
+Contornos detectados: 1
+Tecnología: Segmentación Canal Azul + EfficientNetB0
+============================================================
